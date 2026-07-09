@@ -1,0 +1,10 @@
+Copyright (c) 2026 Tod A. Pascal, Shiang-Tai Lin, Prabal K. Maiti,
+William A. Goddard III. All rights reserved.
+
+This software accompanies the manuscript "An anharmonic liquid-entropy
+functional from the Mori-Zwanzig memory kernel" and implements the
+two- and three-phase thermodynamics (2PT/3PT) entropy method.
+
+Permission to use for academic, non-commercial research is granted
+provided the works listed in the citation banner are cited. For any
+other use, contact tpascal@ucsd.edu.

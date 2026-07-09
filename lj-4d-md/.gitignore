@@ -1,0 +1,7 @@
+engine/md4d
+engine/md4d_gpu
+runs/
+*.vel
+*.meta
+*.thermo
+*.stdout
