@@ -3367,9 +3367,9 @@ class xPTEngine:
         rows[:, 0] = np.arange(mf) * self._vacdtime
         for gi in range(ngrp):
             for k in range(vt):
-                # Extract the 3x3 matrix across all lags, then sum the diagonals
-                vac_mat = result.vac[gi, k] # Shape: (mf, 3, 3)
-                vac_trace = vac_mat[:, 0, 0] + vac_mat[:, 1, 1] + vac_mat[:, 2, 2]
+                # Extract the dxd matrix across all lags, then sum the diagonals
+                vac_mat = result.vac[gi, k] # Shape: (mf, d, d)
+                vac_trace = np.einsum('tii->t', vac_mat)
 
                 rows[:, 1 + gi * vt + k] = vac_trace
 
