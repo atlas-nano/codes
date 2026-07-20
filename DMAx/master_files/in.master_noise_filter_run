@@ -1,0 +1,15 @@
+print                ================================================
+print                .
+                     
+reset_timestep       0
+timestep             prod_timestep
+print                "Begin dumping pressure info"
+thermo_style         custom step time etotal ke temp pe press pxx pyy pzz pxy pxz pyz dt vol density
+fix                  2 all nvt temp ${rtemp} ${rtemp} tdamp tloop 10 ploop 10
+
+thermo               dump_freq
+#restart              50000 ${sname}.${rtemp}K.*.restart
+dump                 1 all custom 1000 ${sname}.${rtemp}K.prod.lammps id type xu yu zu vx vy vz
+run                  runtime
+unfix                2
+undump               1

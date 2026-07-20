@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: DMAx
+Version: 1.0
+Summary: A high-throughput workflow for Dynamic Mechanical Analysis simulations with LAMMPS
+Home-page: https://github.com/rsilvabuarque/DMAx
+Author: Ricardo Silva Buarque
+Author-email: rsilvabuarque@ucsd.edu

@@ -1,0 +1,32 @@
+print                ================================================
+print                .
+fix                  2 all nvt temp ${rtemp} ${rtemp} 100.0 tloop 10 ploop 10
+thermo               100
+dump                 1 all custom 10000 ${sname}.${rtemp}K.prod.lammps id type xu yu zu vx vy vz
+run                  runtime1
+unfix                2
+undump               1
+log                  ${sname}_2pt.eng
+
+# Everything below relates to the generation of the .lammps file for 2PT input
+print                .
+print 		     ============================================================
+print 		     "try to get .eng files"
+print 		     ============================================================
+print                .
+
+compute        	     atomPE all pe/atom
+compute              atomKE all ke/atom
+variable             atomEng atom c_atomPE+c_atomKE
+
+fix                  dynamics all nvt temp ${rtemp} ${rtemp} 100.0
+
+timestep             1
+thermo               4
+thermo_style         custom etotal ke temp pe ebond eangle edihed eimp evdwl ecoul elong ebond press vol
+thermo_modify        line multi
+timestep             1
+dump                 atomData all custom 4 ${sname}_2pt.lammps id type xu yu zu vx vy vz q v_atomEng
+run                  runtime2
+unfix                dynamics
+undump         	     atomData

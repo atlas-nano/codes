@@ -1,0 +1,7 @@
+README.md
+setup.py
+DMAx/DMAx.egg-info/PKG-INFO
+DMAx/DMAx.egg-info/SOURCES.txt
+DMAx/DMAx.egg-info/dependency_links.txt
+DMAx/DMAx.egg-info/requires.txt
+DMAx/DMAx.egg-info/top_level.txt
