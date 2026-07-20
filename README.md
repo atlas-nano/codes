@@ -15,3 +15,19 @@ Each subdirectory is self-contained with its own README, license, and examples.
 ```bash
 pip install "git+https://github.com/atlas-nano/codes.git#subdirectory=py-xPT"
 ```
+
+This builds and installs **only** py-xPT; the other codes in this repository are
+not pulled into your environment. Append `@3pt-v1` before `#subdirectory` to pin
+the release used in the 3PT paper.
+
+## Checking out a single code
+
+To get just one code's source tree (e.g. `py-xPT/`) without the rest:
+
+```bash
+git clone --no-checkout --filter=blob:none https://github.com/atlas-nano/codes.git
+cd codes && git sparse-checkout set py-xPT && git checkout
+```
+
+The repository ships no trajectories and is small, so a plain
+`git clone` followed by `cd py-xPT` also works.
