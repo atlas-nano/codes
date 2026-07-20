@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Two- and three-phase thermodynamics (2PT/3PT): absolute entropy and free energy from a single equilibrium MD trajectory"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Copyright (c) 2026 Pascal, Lin, Maiti, Goddard. All rights reserved." }
+license = { text = "MIT" }
 authors = [{ name = "Tod A. Pascal", email = "tpascal@ucsd.edu" }]
 dependencies = [
     "numpy>=1.24",
