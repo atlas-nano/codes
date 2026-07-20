@@ -6,6 +6,8 @@ cage-entropy prefactor `p = 1/d` in the Three-Phase Explicit Anharmonic
 Thermodynamics (3PT) paper. Standard MD codes hard-wire three Cartesian
 components; this engine integrates genuinely 4D kinematics on a four-torus.
 
+**License:** MIT · **Archived on Zenodo:** https://doi.org/10.5281/zenodo.21447750
+
 ## Contents
 
 | path | what |

@@ -4,6 +4,8 @@
 energy, and heat capacity of a liquid or solid from a *single* equilibrium
 molecular-dynamics trajectory, via the velocity density of states (DoS).
 
+**License:** MIT · **Archived on Zenodo:** https://doi.org/10.5281/zenodo.21447746
+
 This is the reference implementation accompanying the manuscript *"An anharmonic
 liquid-entropy functional from the Mori–Zwanzig memory kernel."* It computes:
 
