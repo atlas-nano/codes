@@ -1,0 +1,10 @@
+# xPT on-the-fly analysis  (fix xpt)
+# Nevery = 4  Nframes = 2500  prefix = spcew_water_ini
+# Units: S,Cv [J/mol/K]  A,E,ZPE,E_md [kJ/mol]  D [cm^2/s]  f []  T_vac [K]  P_avg [atm]
+# Classical quantities (S_c,A_c,E_c,Cv_c) use same units as quantum equivalents.
+# Quantities normalized per molecule
+# Molecular mode: 216 molecules, mode=2, linear=no, rotsym=2
+# Hard-sphere EOS: CS  entropy: rigorous
+#     Step          S_q          A_q          E_q         Cv_q            D   fluidicity        T_vac       Nmol        DOF      V(Ang3)   P_avg(atm)   E_md(kJ/mol)  S_c(J/molK)  A_c(kJ/mol)  E_c(kJ/mol) Cv_c(J/molK)      S_trans        S_rot        S_vib        f_rot        D_rot  ZPE_q(kJ/mol)   mu_q(kJ/mol)   mu_c(kJ/mol)     S_cage_t     S_cage_r
+     10000      55.8006     -51.3085     -34.8019      80.1378  2.52875e-05     0.236570     294.8302        216       1296    6617.5119    -101.5563       -39.4172      48.5226     -0.66329      13.7066       91.934      45.7906        10.01            0     0.050543  1.41670e-06              0       -47.1086        3.53658            0            0
+     20000      56.4516     -51.2471     -34.5193      76.1058  2.22376e-05     0.221917     297.3601        216       1296    6617.5119    -480.0202       -39.0447      49.4184    -0.753892      13.8733       87.585      46.1049      10.3467            0     0.053415  1.57854e-06              0       -46.9978         3.4954            0            0

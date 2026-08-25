@@ -1,0 +1,68 @@
+# Shared velocity buffer: one trajectory, six analyses.
+#
+# The six fixes below agree on group, Nframes, Nevery, correlator and
+# molecule setting, so they accumulate the same trajectory.  Only `mode` and
+# `refinement` differ, and neither is part of the equivalence test, because
+# both act on the density of states rather than on the trajectory.
+#
+# The first fix owns the velocity buffer; the other five re-point at it and
+# skip frame accumulation, so they add no memory, no per-frame staging and no
+# per-frame MPI_Allreduce.  Each still runs its own window-end analysis.
+#
+# Look for five lines like this in the log:
+#
+#   FixXPT::s2-all: sharing velocity buffer with FixXPT::s1-all
+#                   (nevery=5, nframes=4096, FFT, do_molecule=0)
+#
+# Measured on this deck (500 atoms, Nframes = 4096, one rank):
+#
+#   1 fix                       618.7 MB peak RSS
+#   6 fixes, buffer shared      620.3 MB      (+1.6 MB for five more analyses)
+#   6 fixes, sharing defeated   933.5 MB      (+314.8 MB)
+#
+# The last row puts each fix on its own group holding the same atoms, which
+# blocks sharing while leaving the work unchanged.  Sharing needs the FFT
+# correlator; the multi-tau ring buffers are per-fix and are never shared.
+
+units           real
+atom_style      atomic
+boundary        p p p
+
+# Liquid Ar at rho = 1.40 g/cm3, N = 500  ->  L = 28.73 Ang
+variable        N    equal 500
+variable        Lbox equal 28.73
+
+region          simbox block 0 ${Lbox} 0 ${Lbox} 0 ${Lbox} units box
+create_box      1 simbox
+create_atoms    1 random ${N} 98765 simbox
+
+mass            1 39.948                    # g/mol
+pair_style      lj/cut 8.5125               # rc = 2.5 sigma
+pair_coeff      1 1 0.2379 3.405 8.5125     # kcal/mol, Ang
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+minimize        1.0e-6 1.0e-8 10000 100000  # clear overlaps from random placement
+
+timestep        1.0
+velocity        all create 100.0 54321 dist gaussian
+
+fix             eq all nvt temp 100.0 100.0 100.0
+fix             mom all momentum 100 linear 1 1 1    # required for D
+run             5000
+unfix           eq
+
+fix             nve all nve
+
+# ── one trajectory, six analyses ───────────────────────────────────────────
+fix             s1 all xpt 5 4096 ar.1pt   mode 1PT
+fix             s2 all xpt 5 4096 ar.rig   mode 2PT refinement rigorous
+fix             s3 all xpt 5 4096 ar.lin   mode 2PT refinement lin2003
+fix             s4 all xpt 5 4096 ar.des   mode 2PT refinement desjarlais
+fix             s5 all xpt 5 4096 ar.r2pt  mode 2PT refinement r2pt
+fix             s6 all xpt 5 4096 ar.3pt   mode 3PT
+
+thermo          1000
+thermo_style    custom step temp pe f_s1[1] f_s2[1] f_s6[1]
+run             20480

@@ -1,0 +1,60 @@
+# Example: fix_xpt with the new INI / config-block syntax.
+# Two equivalent ways to configure are shown side-by-side; both produce
+# the same .2pt.thermo output as the legacy single-line form.
+#
+# Companion file:  spcew_water.2pt.ini  (the INI loaded by the first fix)
+
+units                real
+atom_style           full
+boundary             p p p
+dielectric           1
+special_bonds        lj/coul 0.0 0.0 1.0
+
+pair_style           lj/charmm/coul/long 9 10.00000
+bond_style           harmonic
+angle_style          harmonic
+kspace_style         pppm 1e-05
+
+read_data            data.spcew.box
+
+pair_modify          mix geometric
+neighbor             2.0 multi
+neigh_modify         every 2 delay 4 check yes
+thermo_style         multi
+thermo_modify        line multi format float %14.6f flush yes
+variable             rtemp index 298
+timestep             1
+group                water type 1 2
+
+fix                  shakeH water shake 0.0001 20 500 m 1.008 a 1
+
+# brief equilibration
+velocity             all create ${rtemp} 123981231 rot yes dist gaussian
+fix                  th all nvt temp ${rtemp} ${rtemp} 100.0
+run                  1000
+unfix                th
+
+# ── fix_xpt: NEW INI-file syntax ───────────────────────────────────────────
+# reads keys from spcew_water.2pt.ini (in this directory)
+reset_timestep       0
+fix                  nvt all nvt temp ${rtemp} ${rtemp} 100.0
+
+fix                  twopt_ini water xpt &
+                       output spcew_water_ini &
+                       input  spcew_water.2pt.ini
+
+# (alternatively, the same config can be supplied inline via config """...""":
+# fix              twopt_cfg water xpt output spcew_water_cfg config """
+# nevery     = 4
+# nframes    = 5000
+# normalize  = 1
+# classical  = 1
+# mode       = 2PT
+# molecule   = 1
+# symmetry   = C2v
+# """
+
+run                  20000
+unfix                twopt_ini
+
+print                "Done. Output: spcew_water_ini.2pt.{thermo,pwr,vac}"

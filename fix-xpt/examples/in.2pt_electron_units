@@ -1,0 +1,36 @@
+# Regression test: `units electron` conversion factors.
+#
+# pair_style zero makes this an ideal gas, so the velocities never change and
+# T_vac (from equipartition on VACF(0)) must reproduce the temperature that
+# `velocity create` imposed.  Any error in vac_to_jmol or dt_to_ps shows up
+# directly in column 8 (T_vac) of ELEC.thermo.
+#
+#   expected : T_vac ~= 300 K  (sampling scatter of a few K on 125 atoms)
+#   regression: 5.09e5 K, i.e. 1709x high, when the electron velocity unit is
+#               mistaken for Bohr/atu instead of Bohr/fs
+#
+# LAMMPS defines the electron time unit as the femtosecond
+# (update.cpp: force->femtosecond = 1.0, dt = 0.001) and its velocity unit by
+# force->mvv2e = 1.06657236, which solves to 5.291772e4 m/s = 1 Bohr/fs.
+
+units           electron
+atom_style      atomic
+boundary        p p p
+
+lattice         sc 5.0
+region          box block 0 5 0 5 0 5
+create_box      1 box
+create_atoms    1 box
+mass            1 39.948
+
+pair_style      zero 10.0
+pair_coeff      * *
+
+velocity        all create 300.0 12345 mom yes dist gaussian
+fix             1 all nve
+fix             2 all xpt 1 256 ELEC
+
+timestep        0.001
+thermo          128
+thermo_style    custom step temp f_2[7]
+run             300

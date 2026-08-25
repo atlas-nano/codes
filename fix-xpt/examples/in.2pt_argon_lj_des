@@ -1,0 +1,77 @@
+# ─── Example LAMMPS input: on-the-fly 2PT for liquid Argon (LJ units) ────────
+#
+# This input is the exact LJ-unit equivalent of in.2pt_argon_real.
+# All parameters are converted using the Ar LJ parameters:
+#   epsilon/kB = 119.8 K  →  epsilon = 0.2379 kcal/mol
+#   sigma      = 3.405 Ang
+#   mass       = 39.948 g/mol
+#   tau        = sigma * sqrt(m/eps) = 2.157 ps   (LJ time unit for Ar)
+#
+# Unit conversions applied:
+#   T*   = T[K]   / (eps/kB)     = 100 / 119.8         = 0.8347
+#   dt*  = dt[fs] / tau[fs]      = 1.0 / 2157          = 0.000464 tau
+#   L*   = L[Ang] / sigma[Ang]   = 28.73 / 3.405       = 8.437 sigma
+#   P*   = P[atm] * sigma^3/eps  = 1.0 * 2.42e-3       = 0.00242
+#   Td*  = Tdamp[fs] / tau[fs]   = 100.0 / 2157        = 0.04636 tau
+#   Pd*  = Pdamp[fs] / tau[fs]   = 1000.0 / 2157       = 0.4636 tau
+#   nsteps: identical (same number of steps = same physical time)
+#
+# Expected output: identical thermodynamics to in.2pt_argon_real when
+# converted back to real units.  The epsilon/sigma/mass keywords enable
+# correct hbar* scaling for quantum thermo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+units           lj
+atom_style      atomic
+boundary        p p p
+
+# ── Same initial box as real run: Lbox = 28.73 Ang / 3.405 Ang/sigma ─────────
+variable        N    equal 500
+variable        Lbox equal 8.437    # sigma  (= 28.73 Ang / 3.405 Ang/sigma)
+
+region          simbox block 0 ${Lbox} 0 ${Lbox} 0 ${Lbox} units box
+create_box      1 simbox
+create_atoms    1 random ${N} 98765 simbox
+
+# ── Force field (LJ reduced units: eps*=1, sigma*=1, rc*=2.5) ────────────────
+mass            1 1.0
+pair_style      lj/cut 2.5                   # rc* = 8.5125 Ang / 3.405 = 2.5 sigma
+pair_coeff      1 1 1.0 1.0 2.5
+
+neighbor        0.3 bin
+neigh_modify    every 1 delay 0 check yes
+
+# ── Remove overlaps ───────────────────────────────────────────────────────────
+minimize        1.0e-6 1.0e-8 10000 100000
+
+# ── Timestep: 1 fs / 2157 fs/tau = 0.000464 tau ──────────────────────────────
+timestep        0.000464
+
+# ── Initial velocities at T* = 100/119.69 = 0.8355 ──────────────────────────
+velocity        all create 0.8355 54321 dist gaussian
+
+# ── Equilibration: NPT ────────────────────────────────────────────────────────
+# Tdamp* = 100 fs / 2157 fs/tau = 0.04636 tau
+# Pdamp* = 1000 fs / 2157 fs/tau = 0.4636 tau
+# P*     = 1 atm * (3.405e-10)^3 / (0.2379*4184/6.022e23) = 0.00242
+fix             eq_npt all npt temp 0.8355 0.8355 0.04636 iso 0.00242 0.00242 0.4636
+
+thermo_style    custom step temp press vol density etotal
+thermo          1000
+
+run             100000    # 100000 steps * 0.000464 tau = 46.4 tau = 100 ps
+
+# ── Switch to NVT for 2PT production ─────────────────────────────────────────
+unfix           eq_npt
+fix             prod_nvt all nvt temp 0.8355 0.8355 0.04636
+
+fix             2pt all xpt 5 512 ar_lj_ar_des classical normalize epsilon 0.2379 sigma 3.405 mass 39.948 mode 2PT refinement desjarlais
+
+# ── Thermo output ─────────────────────────────────────────────────────────────
+thermo_style    custom step etotal temp press density &
+                f_2pt[1] f_2pt[2] f_2pt[3] f_2pt[4] f_2pt[5] f_2pt[6] f_2pt[7]
+thermo          2560     # every completed 2PT window (512 * 5 = 2560 steps)
+
+# ── Production: 20 full 2PT windows ──────────────────────────────────────────
+run             51200    # 20 windows * 2560 steps = 51.2 ps (identical to real run)
+

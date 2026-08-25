@@ -1,0 +1,137 @@
+# ------------------------------
+# Sodium BCC crystal (512 atoms)
+# ------------------------------
+
+units                metal
+dimension            3
+boundary             p p p
+atom_style           atomic
+
+# ------------------------------
+# Create BCC sodium lattice
+# ------------------------------
+
+variable             alat equal 4.23   # lattice constant for Na (Å, ~300 K)
+
+lattice              bcc ${alat}
+region               box block 0 8 0 8 0 8
+create_box           1 box
+create_atoms         1 box
+
+mass                 1 22.989769   # sodium atomic mass (amu)
+
+# NOTE: Na_v2.eam.fs is not distributed with this package.  Supply an
+# eam/fs sodium potential of your choice and adjust the file name below.
+pair_style           eam/fs
+pair_coeff           * * Na_v2.eam.fs Na
+                     
+                     
+neighbor             2.0 bin
+neigh_modify         every 2 delay 4 check yes
+thermo_style         multi
+thermo_modify        line multi format float %14.6f flush yes
+variable             sname string Na
+ 
+                     
+timestep             0.008 #8 fs
+                     
+fix                  nodrift all momentum 100 linear 1 1 1                     
+                     
+print                .
+print                ==========================================
+print                "500 steps CG Minimization"
+print                ==========================================
+print                .
+                     
+dump                 1 all custom 25 ${sname}.min.lammps id type xu yu zu vx vy vz
+thermo               10
+min_style            sd
+minimize             1.0e-4 1.0e-4 500 5000
+min_style            cg
+minimize             1.0e-4 1.0e-4 500 5000
+#now                 minimize the entire system
+minimize             1.0e-4 1.0e-4 500 5000
+undump               1
+                     
+print                .
+print                =====================================
+print                "NVT dynamics to heat system"
+print                =====================================
+print                .
+                     
+velocity             all create 300 123981231 dist gaussian
+thermo               100
+dump                 1 all custom 1000 ${sname}.heat.lammpstrj id type xu yu zu vx vy vz
+fix                  3 all nvt temp 300 300 100.0
+run                  10000
+unfix                3
+undump               1
+                     
+variable             idx loop 25
+label                iLoop
+variable             rtemp equal 250+50*v_idx
+log                  ${sname}.${rtemp}K.mode${mode}.equil.lammps.log
+print                .
+print                ===============================================================
+print                "NPT dynamics with an isotropic pressure of 1atm. at ${rtemp}K"
+print                ===============================================================
+print                .
+                     
+fix                  2 all npt temp ${rtemp} ${rtemp} 100.0 iso 1.0 1.0 2000.0
+dump                 1 all custom 5000 ${sname}.${rtemp}K.mode${mode}.npt.lammps id type xu yu zu vx vy vz
+variable             latx equal lx
+variable             laty equal ly
+variable             latz equal lz
+fix                  lxavg all ave/time 1 25000 25000 v_latx
+fix                  lyavg all ave/time 1 25000 25000 v_laty
+fix                  lzavg all ave/time 1 25000 25000 v_latz
+run                  500000
+variable             xavg equal f_lxavg
+variable             yavg equal f_lyavg
+variable             zavg equal f_lzavg
+undump               1
+unfix                2
+print                "current cell: ${latx} ${laty} ${latz} cell avgs: ${xavg} ${yavg} ${zavg}"
+print                "deforming cell"
+fix                  2 all nvt temp ${rtemp} ${rtemp} 100.0 nreset 10000
+dump                 1 all custom 5000 ${sname}.${rtemp}K.mode${mode}.deform.lammps id type xu yu zu vx vy vz
+fix                  1 all deform 100 x final 0 ${xavg} y final 0 ${yavg} z final 0 ${zavg} units box
+undump               1
+unfix                lxavg
+unfix                lyavg
+unfix                lzavg
+run                  100000
+unfix                1
+unfix                2
+fix                  2 all nvt temp ${rtemp} ${rtemp} 100.0 nreset 10000
+dump                 1 all custom 5000 ${sname}.${rtemp}K.mode${mode}.nvt.lammps id type xu yu zu vx vy vz
+run                  100000
+undump               1
+unfix                2
+                     
+print                .
+print                ================================================
+print                "NVT production dynamics "
+print                ================================================
+print                .
+                     
+fix                  2 all nvt temp ${rtemp} ${rtemp} 100.0 tloop 10 ploop 10
+dump                 1 all custom 1000 ${sname}.${rtemp}K.mode${mode}.prod.lammps id type xu yu zu vx vy vz
+run                  100000 # run for 15 ns
+unfix                2
+
+write_restart        ${sname}.${rtemp}K.mode${mode}.restart
+print                "================================================"
+print                "NVT dynamics for 2PT"
+print                "================================================"
+thermo               100
+fix                  2pt all xpt 1 5000 ${sname}.${rtemp}K.mode${mode} classical normalize mode ${mode} 
+fix                  1 all nvt temp ${rtemp} ${rtemp} 100.0
+run                  0 post no
+run                  50000
+unfix                1
+unfix                2pt
+undump               1
+
+next                 idx
+jump                 SELF iLoop
