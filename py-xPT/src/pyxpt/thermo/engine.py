@@ -2790,6 +2790,14 @@ class xPTEngine:
         if n > 0:
             rT /= n
         if grp.linear:
+            # LINEAR-ROTOR FIX: for a linear molecule the axial moment pI[0] is ~0 (only
+            # roundoff, ~1e-65), so rT[0] derived from it is either ~1e18 or 0 depending on
+            # the SIGN of that noise. Downstream the rigid-rotor gas weight both guards on
+            # rT[0] (`if rT[0] > 1e-4`) and forms sqrt(rT[0]*rT[1]), so OH- S_rot becomes
+            # bistable (flips between two wrong values per velocity seed). Use the finite
+            # PERPENDICULAR rotational temperature (rT[1]) for slot 0 too, excluding the
+            # meaningless axial axis -- as the fix_xpt LAMMPS fix does per frame.
+            rT[0] = rT[1]
             rT[2] = -999.0
 
     # ── IR / Raman methods live in spectra/engine.py (SpectralMixin) ─────────
