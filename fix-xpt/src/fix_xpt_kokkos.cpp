@@ -330,11 +330,10 @@ bool FixXPTKokkos<DeviceType>::ensure_scratch_views_sized()
 {
   const int nm     = nmol_group;
   const int natoms = natom_buf;
-  if (nm <= 0 || natoms <= 0) return false;
-  if (nm == scratch_nm_cached && natoms == scratch_natoms_cached) {
-    return false;
-  }
-  if (nm != scratch_nm_cached) {
+  if (natoms <= 0) return false;
+  bool resized = false;
+  // Per-molecule scratch: molecular mode only (nmol_group is 0 when monatomic).
+  if (nm > 0 && nm != scratch_nm_cached) {
     pass1_lcom_p_d = Kokkos::View<double*, DeviceType>(
         Kokkos::view_alloc(Kokkos::WithoutInitializing, "fix_xpt:pass1_lcom_p_d"),
         size_t(nm) * 3);
@@ -357,7 +356,9 @@ bool FixXPTKokkos<DeviceType>::ensure_scratch_views_sized()
         Kokkos::view_alloc(Kokkos::WithoutInitializing, "fix_xpt:permol_omega_d"),
         size_t(nm) * 3);
     scratch_nm_cached = nm;
+    resized = true;
   }
+  // Per-atom scratch, including the push gather buffers that every mode needs.
   if (natoms != scratch_natoms_cached) {
     pass3_vib_d = Kokkos::View<double*, DeviceType>(
         Kokkos::view_alloc(Kokkos::WithoutInitializing, "fix_xpt:pass3_vib_d"),
@@ -370,8 +371,9 @@ bool FixXPTKokkos<DeviceType>::ensure_scratch_views_sized()
         Kokkos::view_alloc(Kokkos::WithoutInitializing, "fix_xpt:push_mass_local_d"),
         size_t(natoms));
     scratch_natoms_cached = natoms;
+    resized = true;
   }
-  return true;
+  return resized;
 }
 
 /* ----------------------------------------------------------------------
