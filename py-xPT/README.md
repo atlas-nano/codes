@@ -4,7 +4,7 @@
 energy, and heat capacity of a liquid or solid from a *single* equilibrium
 molecular-dynamics trajectory, via the velocity density of states (DoS).
 
-**License:** MIT · **Archived on Zenodo:** https://doi.org/10.5281/zenodo.21447746
+**License:** MIT · **Archived on Zenodo:** v1.0.1 https://doi.org/10.5281/zenodo.22697489 (all versions: https://doi.org/10.5281/zenodo.21447745)
 
 This is the reference implementation accompanying the manuscript *"An anharmonic
 liquid-entropy functional from the Mori–Zwanzig memory kernel."* It computes:
@@ -105,6 +105,13 @@ normalize = 1
 ```bash
 pytest                       # end-to-end regression on a bundled mini LJ trajectory
 ```
+
+## Changes
+- **1.0.1** — linear molecules: the rotational temperature of the axial slot now uses the
+  perpendicular moment. The axial moment of a linear molecule is zero to roundoff, and in
+  1.0.0 the sign of that roundoff decided whether the rotational gas term diverged or was
+  skipped, so the rotational entropy of linear species (e.g. OH⁻) varied from seed to seed.
+  Nonlinear and monatomic results are unchanged.
 
 ## Cite
 1. Lin, Blanco, Goddard. *J. Chem. Phys.* **2003**, 119, 11792.

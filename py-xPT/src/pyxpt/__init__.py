@@ -32,4 +32,4 @@ __all__ = [
     "COPYRIGHT", "ModexPT",
     "core",
 ]
-__version__ = "1.0.0"
+__version__ = "1.0.1"

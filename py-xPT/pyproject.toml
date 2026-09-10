@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "py-xpt"
-version = "1.0.0"
+version = "1.0.1"
 description = "Two- and three-phase thermodynamics (2PT/3PT): absolute entropy and free energy from a single equilibrium MD trajectory"
 readme = "README.md"
 requires-python = ">=3.10"
