@@ -168,6 +168,7 @@ FixXPT::FixXPT(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   vel_buf_f     = nullptr;
   buffer_precision = BUFFER_FP64;
   buffer_layout    = LAYOUT_DISTRIBUTED;
+  buffer_layout_explicit = 0;
   ng_window    = 0;
   n_home       = 0;
   nm_home      = 0;
@@ -690,6 +691,7 @@ void FixXPT::set_option(const char *key, const char *value)
     else if (!strcasecmp(value, "replicated"))  buffer_layout = LAYOUT_REPLICATED;
     else
       error->all(FLERR, "fix xpt: buffer_layout must be 'distributed' or 'replicated'");
+    buffer_layout_explicit = 1;
   }
   else if (!strcasecmp(key, "correlator")) {
     need_val(value);
@@ -1077,6 +1079,19 @@ void FixXPT::init()
   if (atom->rmass_flag || !atom->mass)
     error->all(FLERR, "fix xpt requires per-type masses; atom styles with per-atom "
                       "masses (rmass) are not supported");
+
+  // On one rank the two layouts hold the same history, so the choice is only
+  // a speed one and the measured winner differs by mode: an atomic group is
+  // faster replicated (a slot is tag - 1, with no home-rank exchange and no
+  // binary search, and xpt/kk keeps the frames on the device), a molecular
+  // group faster distributed (the home rank assembles each molecule from data
+  // it already holds).  An explicit buffer_layout always wins.
+  if (nprocs == 1 && !buffer_layout_explicit && !do_molecule && distributed()) {
+    buffer_layout = LAYOUT_REPLICATED;
+    if (comm->me == 0)
+      utils::logmesg(lmp, "FixXPT::{}-{}: one rank, atomic group; "
+                     "using buffer_layout replicated\n", id, group->names[igroup]);
+  }
 
   if (max_memory_gb > 0.0 && nframes > 0) {
     // The budget is per rank: in the distributed layout a rank holds about

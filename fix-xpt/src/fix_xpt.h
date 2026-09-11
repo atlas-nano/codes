@@ -422,6 +422,7 @@ class FixXPT : public Fix {
   // (vel_buf, group_slots, mass_buf) and its molecular siblings is unchanged.
   enum BufferLayout { LAYOUT_REPLICATED = 0, LAYOUT_DISTRIBUTED = 1 };
   int buffer_layout;
+  int buffer_layout_explicit;           // 1 = set by the user (keyword buffer_layout)
   bool distributed() const { return buffer_layout == LAYOUT_DISTRIBUTED; }
   int ng_window;                        // global group atoms at window start
 #ifdef FIX_XPT_DEBUG_VERIFY

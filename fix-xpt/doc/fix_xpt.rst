@@ -140,12 +140,13 @@ Syntax
        typically unaffected (< 0.5%), but the heat capacity *Cv* can be
        precision-sensitive (a warning is logged).
      *buffer_layout* value = distributed or replicated
-       where the frame history lives (default distributed).  *distributed*
-       gives every group atom one home rank per window (whole molecules with
-       *molecule*), so a rank holds about 1/P of the history; *replicated*
-       keeps the whole history on every rank.  Both give the same results to
-       floating-point summation order.  See the parallel memory layout
-       section below.
+       where the frame history lives (default distributed, except on a
+       single rank without *molecule*, where the fix selects *replicated*).
+       *distributed* gives every group atom one home rank per window (whole
+       molecules with *molecule*), so a rank holds about 1/P of the history;
+       *replicated* keeps the whole history on every rank.  Both give the
+       same results to floating-point summation order.  See the parallel
+       memory layout section below.
 
 Examples
 """"""""
@@ -299,6 +300,13 @@ frame.
 *buffer_layout replicated* keeps a complete copy of the history on every rank
 and assembles each frame with ``MPI_Allreduce``.  The two layouts agree to
 floating-point summation order.
+
+On one rank the two layouts hold the same history, so the choice is only a
+speed one.  Unless *buffer_layout* is given explicitly, a single-rank run
+without *molecule* therefore uses *replicated*, which indexes a frame by atom
+ID with no exchange and no lookup (and, under *xpt/kk*, keeps the frames on
+the device); a single-rank molecular run stays *distributed*, which assembles
+each molecule from data the rank already holds.  The fix logs the choice.
 
 ----------
 
