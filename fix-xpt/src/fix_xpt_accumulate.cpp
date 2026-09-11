@@ -76,10 +76,11 @@ using namespace FixConst;
 
    Called once the multi-tau buffers exist (post_run's `run 0` path).  Mirrors
    the wire format written by write_restart; a shape change vs. the run that
-   wrote the restart (different nframes/mt_MP/natom) is reported and discarded.
-   NOTE: write_restart serialises only rank 0's partial c_sum, so a multi-rank
-   restart restores the rank-0 partial (single-domain `run 0` reanalysis is
-   exact).
+   wrote the restart (different nframes/mt_MP/group size) is reported and
+   discarded.  A v2 restart holds global sums: rank 0 takes them and every
+   other rank zeros, so the analysis reduction reproduces the global sum on
+   any rank count.  A v1 restart holds rank 0's partial sums only and is
+   restored on a single rank only.
 ====================================================================== */
 void FixXPT::multitau_apply_restart_stash()
 {
@@ -88,10 +89,11 @@ void FixXPT::multitau_apply_restart_stash()
   const double *list = mt_restart_stash.data();
   long m = 0;
   const int raw0             = (int)list[0];
-  const bool inertia_in      = (raw0 >= 100);   // Option-1 mol_inertia block
+  const bool v2              = (raw0 >= 200);   // global sums and counts
+  const bool inertia_in      = ((v2 ? raw0 - 200 : raw0) >= 100);   // Option-1 mol_inertia block
   const int mt_n_levels_in   = (int)list[1];
   const int mt_MP_in         = (int)list[2];
-  const int mt_natom_ring_in = (int)list[3];
+  const int mt_natom_ring_in = (int)list[3];    // v2: N_g
   const int matrix_in        = (int)list[4];
   const int mol_in           = (int)list[5];
   const int n_trans_in       = (int)list[6];
@@ -99,20 +101,39 @@ void FixXPT::multitau_apply_restart_stash()
   const int n_vib_in         = (int)list[8];
   m = 9;
 
+  auto discard = [&]() {
+    mt_restart_pending = false;
+    mt_restart_stash.clear();
+  };
+  if (!v2 && nprocs > 1) {
+    if (comm->me == 0)
+      utils::logmesg(lmp, "FixXPT::{}-{}: this multi-tau restart predates fix-xpt 1.0.1 and "
+                     "holds only rank 0's partial sums, so it cannot be restored on {} "
+                     "ranks; discarding it.  Reanalyse it with `run 0` on one rank.\n",
+                     id, group->names[igroup], nprocs);
+    discard();
+    return;
+  }
+  // v2 compares the global group size; v1 the ring width it was written with.
+  const int natom_now = v2 ? ng_window : mt_natom_ring;
   if (mt_n_levels_in > 0
       && (mt_n_levels_in != mt_n_levels
           || mt_MP_in       != mt_MP
-          || mt_natom_ring_in != mt_natom_ring)) {
+          || mt_natom_ring_in != natom_now)) {
     if (comm->me == 0)
       utils::logmesg(lmp, "FixXPT::{}-{}: restart multi-tau shape mismatch "
                      "(saved {}/{}/{}, current {}/{}/{}); discarding state.\n",
                      id, group->names[igroup],
                      mt_n_levels_in, mt_MP_in, mt_natom_ring_in,
-                     mt_n_levels,    mt_MP,    mt_natom_ring);
-    mt_restart_pending = false;
-    mt_restart_stash.clear();
+                     mt_n_levels,    mt_MP,    natom_now);
+    discard();
     return;
   }
+
+  // A reduced (partial-per-rank) accumulator is restored on rank 0 only.
+  auto restored = [&](double saved, bool partial) {
+    return (v2 && partial && comm->me != 0) ? 0.0 : saved;
+  };
 
   if (mt_n_levels_in > 0) {
     const int L  = mt_n_levels;
@@ -120,7 +141,7 @@ void FixXPT::multitau_apply_restart_stash()
     if ((int)mt_c_sum.size() < L) mt_c_sum.resize(L);
     for (int l = 0; l < L; l++) {
       if ((int)mt_c_sum[l].size() < MP) mt_c_sum[l].resize(MP, 0.0);
-      for (int k = 0; k < MP; k++) mt_c_sum[l][k] = list[m++];
+      for (int k = 0; k < MP; k++) mt_c_sum[l][k] = restored(list[m++], true);
     }
     if ((int)mt_c_cnt.size() < L) mt_c_cnt.resize(L);
     for (int l = 0; l < L; l++) {
@@ -138,16 +159,18 @@ void FixXPT::multitau_apply_restart_stash()
     if (matrix_in) m += 6L * (long)L * MP;
   }
 
+  // v2 streams hold global sums, so any allocated stream takes them; a v1
+  // stream must have been allocated to its saved per-rank width.
   auto read_stream = [&](MultiTauStream &s, int n_units_in) {
     if (n_units_in <= 0) return;
     const int L  = mt_n_levels_in;   // saved level count (== mt_n_levels here)
     const int MP = mt_MP_in;
-    if (s.n_units != n_units_in) {   // stream not allocated to this shape — skip
+    if (v2 ? (s.n_units <= 0) : (s.n_units != n_units_in)) {   // no destination — skip
       m += (long)L * MP + 3L * L;
       return;
     }
     for (int l = 0; l < L; l++)
-      for (int k = 0; k < MP; k++) s.c_sum[l][k] = list[m++];
+      for (int k = 0; k < MP; k++) s.c_sum[l][k] = restored(list[m++], s.is_distributed);
     for (int l = 0; l < L; l++) s.count_seen[l] = (long)list[m++];
     for (int l = 0; l < L; l++) s.head[l]       = (int)list[m++];
     for (int l = 0; l < L; l++) s.down_n[l]     = (int)list[m++];
@@ -160,18 +183,28 @@ void FixXPT::multitau_apply_restart_stash()
 
   // Option 1: restore the window-summed mol_inertia + count (nmol == trans
   // units).  read_stream advances m by the full per-stream size even when it
-  // skips a shape-mismatched stream, so the cursor lands exactly here.
+  // skips a shape-mismatched stream, so the cursor lands exactly here.  The
+  // distributed layout keeps its home slice [mol_lo[me], mol_lo[me+1]).
   if (inertia_in && mol_in && n_trans_in > 0) {
     const long saved_count = (long)list[m++];
-    if (!mol_inertia)
-      memory->create(mol_inertia, n_trans_in, 3, "fix_xpt:mol_inertia");
-    for (int mm = 0; mm < n_trans_in; mm++)
-      for (int d = 0; d < 3; d++) mol_inertia[mm][d] = list[m++];
-    mol_inertia_count = (int)saved_count;
+    if (distributed()) {
+      if (n_trans_in == nmol_group && mol_inertia) {
+        for (int ml = 0; ml < nm_home; ml++)
+          for (int d = 0; d < 3; d++)
+            mol_inertia[ml][d] = list[m + 3L * (mol_lo[me] + ml) + d];
+        mol_inertia_count = (int)saved_count;
+      }
+    } else {
+      if (!mol_inertia)
+        memory->create(mol_inertia, n_trans_in, 3, "fix_xpt:mol_inertia");
+      for (int mm = 0; mm < n_trans_in; mm++)
+        for (int d = 0; d < 3; d++) mol_inertia[mm][d] = list[m + 3L * mm + d];
+      mol_inertia_count = (int)saved_count;
+    }
+    m += 3L * n_trans_in;
   }
 
-  mt_restart_pending = false;
-  mt_restart_stash.clear();
+  discard();
 }
 
 /* ======================================================================
@@ -191,6 +224,17 @@ void FixXPT::compute_mol_inertia_oneframe()
 {
   const int nm = nmol_group;
   if (nm <= 0 || !mol_inertia) return;
+
+  // Distributed layout: ship one frame home and assemble it (row 0).  The
+  // multi-tau streams are not pushed; mol_inertia_count becomes 1.
+  if (distributed()) {
+    for (int ml = 0; ml < nmol_buf; ml++)
+      mol_inertia[ml][0] = mol_inertia[ml][1] = mol_inertia[ml][2] = 0.0;
+    mol_inertia_count = 0;
+    push_velocity_frame(0);
+    assemble_mol_frame_home(0, 0);
+    return;
+  }
 
   int      *mask   = atom->mask;
   int      *tag    = atom->tag;
@@ -288,6 +332,7 @@ void FixXPT::grow_buf(int n)
   n = std::max(n, natom_buf + 32);
 
   memory->destroy(vel_buf);
+  memory->destroy(vel_buf_f);
   memory->destroy(mass_buf);
 
   // With multitau the ring buffer (mt_v_ring) carries the velocity history,
@@ -314,6 +359,11 @@ void FixXPT::grow_buf(int n)
     } else {
       memory->create(vib_vel_buf,   vib_frames, n, 3, "fix_xpt:vib_vel_buf");
     }
+    // Home ranks assemble whole molecules from the shipped unwrapped positions.
+    if (distributed()) {
+      memory->destroy(home_xu);
+      memory->create(home_xu, n, 3, "fix_xpt:home_xu");
+    }
   }
 
   natom_buf = n;
@@ -321,6 +371,39 @@ void FixXPT::grow_buf(int n)
   // After reallocation, propagate the new pointers to every consumer
   // sharing this buffer (their stale pointers would otherwise reference
   // freed memory at the next end_of_step KE-accumulation read).
+  for (FixXPT *c : buffer_consumers) c->sync_buffer_pointers_from_owner();
+}
+
+/* ======================================================================
+   grow_mol_buf — (re)allocate the per-molecule frame buffers (distributed
+   layout), grow-only, to hold nm home molecules.
+====================================================================== */
+
+void FixXPT::grow_mol_buf(int nm)
+{
+  if (!owns_buffer) {
+    sync_buffer_pointers_from_owner();
+    return;
+  }
+  if (nm <= nmol_buf && com_vel_buf && mol_inertia) return;
+  // Capacity is never zero, so the molecular multi-tau streams (sized to it)
+  // push on every rank, including one that homes no molecule.
+  nm = std::max(nm, nmol_buf + 8);
+
+  memory->destroy(com_vel_buf);
+  memory->destroy(omega_buf);
+  memory->destroy(angmom_buf);
+  memory->destroy(mol_inertia);
+  const int mol_frames = (correlator == CORR_MULTITAU) ? 1 : nframes;
+  memory->create(com_vel_buf, mol_frames, nm, 3, "fix_xpt:com_vel_buf");
+  memory->create(omega_buf,   mol_frames, nm, 3, "fix_xpt:omega_buf");
+  memory->create(angmom_buf,  mol_frames, nm, 3, "fix_xpt:angmom_buf");
+  memory->create(mol_inertia, nm, 3, "fix_xpt:mol_inertia");
+  for (int ml = 0; ml < nm; ml++)
+    mol_inertia[ml][0] = mol_inertia[ml][1] = mol_inertia[ml][2] = 0.0;
+  mol_inertia_count = 0;
+  nmol_buf = nm;
+
   for (FixXPT *c : buffer_consumers) c->sync_buffer_pointers_from_owner();
 }
 
@@ -335,13 +418,31 @@ void FixXPT::sync_buffer_pointers_from_owner()
 {
   if (!buffer_owner || buffer_owner == this) return;  // defensive
   vel_buf     = buffer_owner->vel_buf;
+  vel_buf_f   = buffer_owner->vel_buf_f;
   mass_buf    = buffer_owner->mass_buf;
   natom_buf   = buffer_owner->natom_buf;
   if (do_molecule) {
-    com_vel_buf = buffer_owner->com_vel_buf;
-    omega_buf   = buffer_owner->omega_buf;
-    angmom_buf  = buffer_owner->angmom_buf;
-    vib_vel_buf = buffer_owner->vib_vel_buf;
+    com_vel_buf   = buffer_owner->com_vel_buf;
+    omega_buf     = buffer_owner->omega_buf;
+    angmom_buf    = buffer_owner->angmom_buf;
+    vib_vel_buf   = buffer_owner->vib_vel_buf;
+    vib_vel_buf_f = buffer_owner->vib_vel_buf_f;
+  }
+  // Distributed layout: the consumer transforms the owner's home atoms and
+  // molecules, so it takes the owner's layout (the equivalence key fixes the
+  // group, so the layout is the one this fix would have built).
+  if (distributed()) {
+    ng_window    = buffer_owner->ng_window;
+    n_home       = buffer_owner->n_home;
+    nm_home      = buffer_owner->nm_home;
+    nmol_buf     = buffer_owner->nmol_buf;
+    group_slots  = buffer_owner->group_slots;
+    home_tag_lo  = buffer_owner->home_tag_lo;
+    mol_lo       = buffer_owner->mol_lo;
+    molmass_home = buffer_owner->molmass_home;
+    molunit_home = buffer_owner->molunit_home;
+    home_xu      = buffer_owner->home_xu;
+    if (do_molecule) mol_inertia = buffer_owner->mol_inertia;
   }
 }
 
@@ -368,7 +469,10 @@ void FixXPT::accumulate_frame()
     // First frame of a new window: rebuild slot list and buffer.
     // For dynamic groups, rebuild molecular topology every window to refresh
     // slot_to_mol, nmol_group, and molmass (group membership may have evolved).
-    if (do_molecule) {
+    // The distributed layout sizes its molecule buffers in build_home_layout.
+    if (do_molecule && distributed()) {
+      build_mol_topology();
+    } else if (do_molecule) {
       int old_nmol = nmol_group;
       build_mol_topology();
       if (nmol_group != old_nmol && nmol_group > 0) {
@@ -396,11 +500,12 @@ void FixXPT::accumulate_frame()
       }
     }
     // Slots are tag-based (atom_tag - 1) so they are stable across sorts.
+    // In the distributed layout they are home-local indices, set below.
     group_slots.clear();
     int maxTag_local = 0;
     for (int i = 0; i < nlocal; i++) {
       if (!(mask[i] & groupbit)) continue;
-      group_slots.push_back(tag[i] - 1);
+      if (!distributed()) group_slots.push_back(tag[i] - 1);
       if (tag[i] > maxTag_local) maxTag_local = tag[i];
     }
     // Global max tag sets the buffer size (same on all procs via Allreduce)
@@ -419,7 +524,18 @@ void FixXPT::accumulate_frame()
       window_idle = true;
       return;
     }
-    grow_buf(maxTag_global);
+    if (!distributed()) {
+      grow_buf(maxTag_global);
+    } else if (owns_buffer) {
+      build_home_layout();
+      if (do_molecule) {   // the window-averaged inertia restarts with the window
+        for (int ml = 0; ml < nmol_buf; ml++)
+          mol_inertia[ml][0] = mol_inertia[ml][1] = mol_inertia[ml][2] = 0.0;
+        mol_inertia_count = 0;
+      }
+    } else {
+      sync_buffer_pointers_from_owner();   // owner built it this step
+    }
 
     // Save fix_dof at window start so run_analysis uses a value consistent
     // with group_slots (window-start membership), not the current mask which
@@ -452,19 +568,24 @@ void FixXPT::accumulate_frame()
     push_velocity_frame(ibuf);
   }
 
+  // Multi-tau ring buffers.  Owner-only: ring buffers are per-fix, and the
+  // equivalence key includes correlator so a multi-tau consumer only ever
+  // matches a multi-tau owner and inherits its ring here.  Allocated (and
+  // reset at a window start) before the molecular streams take this frame:
+  // those are gated on mt_n_levels > 0, so allocating afterwards started
+  // them at frame 1 in the first window of every molecular run.
+  if (correlator == CORR_MULTITAU && owns_buffer) {
+    if (mt_natom_ring != natom_buf || mt_n_levels == 0) multitau_alloc(natom_buf);
+    if (iframe == 0) multitau_reset_window();
+  }
+
   // Molecular decomposition: compute per-molecule COM velocity and angular
   // velocity.  Owner-only: result lives in shared com_vel_buf / omega_buf /
   // angmom_buf / vib_vel_buf that consumers read via the alias.
   if (do_molecule && nmol_group > 0 && owns_buffer) accumulate_mol_frame();
 
-  // Multi-tau per-step ring-buffer accumulation.  Owner-only: ring buffers
-  // are per-fix, and the equivalence key includes correlator so a multi-tau
-  // consumer only ever matches a multi-tau owner and inherits its ring here.
-  if (correlator == CORR_MULTITAU && owns_buffer) {
-    if (mt_natom_ring != natom_buf || mt_n_levels == 0) multitau_alloc(natom_buf);
-    if (iframe == 0) multitau_reset_window();
-    multitau_push_frame();
-  }
+  // Multi-tau per-step ring-buffer accumulation.
+  if (correlator == CORR_MULTITAU && owns_buffer) multitau_push_frame();
 }
 
 /* ======================================================================
@@ -475,6 +596,7 @@ void FixXPT::multitau_alloc(int natom)
 {
   // Resolve effective L.  Auto rule: smallest L such that the longest lag
   // (M+P−1)·S^(L−1) covers ≥ nframes/2 samples, capped at 32.
+  const int levels_before = mt_n_levels;
   mt_MP = mt_M + mt_P;
   int Lreq = mt_L;
   if (Lreq <= 0) {
@@ -496,10 +618,14 @@ void FixXPT::multitau_alloc(int natom)
   // the last entry is unused.
   mt_down_acc.assign(Lreq, std::vector<double>((size_t)natom * 3, 0.0));
   mt_down_n.assign(Lreq, 0);
-  // Molecular per-channel streams (allocated lazily in accumulate_mol_frame
-  // when nmol_group is first known; alloc only marks them inactive here).
-  mt_molecular_active = false;
-  mt_trans.n_units = mt_rot.n_units = mt_vib.n_units = 0;
+  // Molecular per-channel streams are allocated lazily in accumulate_mol_frame
+  // and resize themselves there.  Only a new level count invalidates them: a
+  // new ring width alone arrives at a window start, after the streams already
+  // took that window's first frame, and invalidating them then drops it.
+  if (Lreq != levels_before) {
+    mt_molecular_active = false;
+    mt_trans.n_units = mt_rot.n_units = mt_vib.n_units = 0;
+  }
 }
 
 void FixXPT::multitau_reset_window()
@@ -863,15 +989,297 @@ void FixXPT::build_mol_topology()
 
 
 /* ======================================================================
-   push_velocity_frame — host-side velocity gather + tag-indexed write
-   + MPI_Allreduce(SUM) into vel_buf[ibuf].  Default impl used by the
-   CPU build of fix_xpt.  Overridden in FixXPTKokkos to do the gather
-   on the GPU.
+   build_home_layout — window-start home-rank partition (distributed layout).
+
+   Every group atom gets one home rank for the window.  The member list is
+   cut into nprocs contiguous blocks of equal atom count: the sorted member
+   tags (monatomic), or the sorted molecule list weighted by atom count
+   (molecular, so a molecule never straddles two homes).  The cuts are a
+   function of replicated data only, so every rank computes the same ones.
+   Owner-only; consumers alias the result.
+====================================================================== */
+
+void FixXPT::build_home_layout()
+{
+  const int P = nprocs;
+
+  if (!do_molecule) {
+    // Gather the sorted member tags (transient: N_g tagints per rank).
+    int    *mask   = atom->mask;
+    tagint *tag    = atom->tag;
+    const int nlocal = atom->nlocal;
+    std::vector<tagint> local_tags;
+    for (int i = 0; i < nlocal; i++)
+      if (mask[i] & groupbit) local_tags.push_back(tag[i]);
+    const int nloc = (int)local_tags.size();
+    std::vector<int> counts(P), displs(P);
+    MPI_Allgather(&nloc, 1, MPI_INT, counts.data(), 1, MPI_INT, world);
+    bigint ng = 0;
+    for (int p = 0; p < P; p++) {
+      if (ng > MAXSMALLINT) break;
+      displs[p] = (int)ng;
+      ng += counts[p];
+    }
+    if (ng > MAXSMALLINT)
+      error->all(FLERR, "fix xpt: group too large for the distributed buffer layout");
+    std::vector<tagint> member_tags(ng);
+    MPI_Allgatherv(local_tags.data(), nloc, MPI_LMP_TAGINT, member_tags.data(),
+                   counts.data(), displs.data(), MPI_LMP_TAGINT, world);
+    std::sort(member_tags.begin(), member_tags.end());
+
+    // Block r is member_tags[(r*N_g)/P, ((r+1)*N_g)/P); home_tag_lo[r] is its
+    // first tag.  An empty block repeats the next block's first tag, and the
+    // lookup (last r with home_tag_lo[r] <= tag) then lands on the non-empty one.
+    home_tag_lo.assign(P + 1, MAXTAGINT);
+    for (int r = 0; r < P; r++) {
+      const bigint cut = ((bigint)r * ng) / P;
+      if (cut < ng) home_tag_lo[r] = member_tags[cut];
+    }
+    const bigint lo = ((bigint)me * ng) / P, hi = ((bigint)(me + 1) * ng) / P;
+    home_tag.assign(member_tags.begin() + lo, member_tags.begin() + hi);
+    home_mol_start.assign(1, 0);
+    nm_home   = 0;
+    ng_window = (int)ng;
+  } else {
+    // Molecules [mol_lo[r], mol_lo[r+1]) are homed on rank r; the cuts
+    // balance the cumulative atom count, which also covers mixed molecules.
+    const int nm = nmol_group;
+    std::vector<bigint> pre(nm + 1, 0);
+    for (int m = 0; m < nm; m++) pre[m + 1] = pre[m] + mol_natom[m];
+    const bigint ng = pre[nm];
+    mol_lo.assign(P + 1, nm);
+    mol_lo[0] = 0;
+    for (int r = 1; r < P; r++) {
+      const bigint target = ((bigint)r * ng) / P;
+      mol_lo[r] = (int)(std::lower_bound(pre.begin(), pre.end(), target) - pre.begin());
+    }
+    const int m0 = mol_lo[me], m1 = mol_lo[me + 1];
+    nm_home = m1 - m0;
+
+    // Home atoms ordered by molecule, ascending tag within each: two scans
+    // of the global slot_to_mol map, no communication.
+    const int nslot = (int)slot_to_mol.size();
+    home_mol_start.assign(nm_home + 1, 0);
+    for (int s = 0; s < nslot; s++) {
+      const int m = slot_to_mol[s];
+      if (m >= m0 && m < m1) home_mol_start[m - m0 + 1]++;
+    }
+    for (int ml = 0; ml < nm_home; ml++) home_mol_start[ml + 1] += home_mol_start[ml];
+    home_tag.resize(home_mol_start[nm_home]);
+    std::vector<int> fill(home_mol_start.begin(), home_mol_start.begin() + nm_home);
+    for (int s = 0; s < nslot; s++) {
+      const int m = slot_to_mol[s];
+      if (m >= m0 && m < m1) home_tag[fill[m - m0]++] = (tagint)s + 1;
+    }
+    ng_window = (int)ng;
+  }
+  n_home = (int)home_tag.size();
+
+  // A slot is a home-local index; this rank transforms all of its home atoms.
+  group_slots.resize(n_home);
+  for (int j = 0; j < n_home; j++) group_slots[j] = j;
+  home_recv.assign(n_home, 0);
+
+  grow_buf(n_home);
+  if (do_molecule) {
+    grow_mol_buf(nm_home);
+    molmass_home.assign(nmol_buf, 0.0);
+    molunit_home.assign(nmol_buf, 0.0);
+    for (int ml = 0; ml < nm_home; ml++) {
+      molmass_home[ml] = molmass[mol_lo[me] + ml];
+      molunit_home[ml] = 1.0;
+    }
+    // Rows past nm_home are never written per frame, but the multi-tau
+    // streams (sized to nmol_buf) read them with zero weight: keep them finite.
+    const int mol_frames = (correlator == CORR_MULTITAU) ? 1 : nframes;
+    for (int t = 0; t < mol_frames; t++)
+      for (int ml = nm_home; ml < nmol_buf; ml++)
+        for (int d = 0; d < 3; d++)
+          com_vel_buf[t][ml][d] = omega_buf[t][ml][d] = angmom_buf[t][ml][d] = 0.0;
+  }
+
+  for (FixXPT *c : buffer_consumers) c->sync_buffer_pointers_from_owner();
+}
+
+/* ----------------------------------------------------------------------
+   home_rank — rank that homes atom `tag` this window, or -1 if the atom is
+   not a window member (molecular) or precedes every member (monatomic).
+------------------------------------------------------------------------- */
+
+int FixXPT::home_rank(tagint tag) const
+{
+  if (do_molecule) {
+    const bigint s = (bigint)tag - 1;
+    if (s < 0 || s >= (bigint)slot_to_mol.size()) return -1;
+    const int m = slot_to_mol[s];
+    if (m < 0) return -1;
+    return (int)(std::upper_bound(mol_lo.begin(), mol_lo.end(), m) - mol_lo.begin()) - 1;
+  }
+  const int r = (int)(std::upper_bound(home_tag_lo.begin(), home_tag_lo.end(), tag)
+                      - home_tag_lo.begin()) - 1;
+  return (r < nprocs) ? r : -1;
+}
+
+/* ----------------------------------------------------------------------
+   home_index — home-local slot of atom `tag` on this rank, or -1.
+------------------------------------------------------------------------- */
+
+int FixXPT::home_index(tagint tag) const
+{
+  auto b = home_tag.begin(), e = home_tag.end();
+  if (do_molecule) {
+    const bigint s = (bigint)tag - 1;
+    if (s < 0 || s >= (bigint)slot_to_mol.size() || slot_to_mol[s] < 0) return -1;
+    const int ml = slot_to_mol[s] - mol_lo[me];
+    if (ml < 0 || ml >= nm_home) return -1;
+    b = home_tag.begin() + home_mol_start[ml];
+    e = home_tag.begin() + home_mol_start[ml + 1];
+  }
+  auto it = std::lower_bound(b, e, tag);
+  return (it != e && *it == tag) ? (int)(it - home_tag.begin()) : -1;
+}
+
+/* ----------------------------------------------------------------------
+   pack_home_datums — pack this rank's local group atoms as D-double datums
+   {tag, mass, v[3] [, unwrapped x[3]]}, grouped by home rank, into
+   xc_sendbuf; fills xc_scount / xc_sdispl (in datums).  The tag rides
+   bit-exactly in a double via ubuf, as AtomVec::pack_exchange does.
+------------------------------------------------------------------------- */
+
+void FixXPT::pack_home_datums(int D)
+{
+  int      *mask   = atom->mask;
+  tagint   *tag    = atom->tag;
+  int      *type   = atom->type;
+  double  **x      = atom->x;
+  double  **v      = atom->v;
+  imageint *image  = atom->image;
+  double   *mass   = atom->mass;
+  const int nlocal = atom->nlocal;
+  const int P      = nprocs;
+
+  xc_scount.assign(P, 0);
+  xc_dest.resize(nlocal);
+  for (int i = 0; i < nlocal; i++) {
+    const int r = (mask[i] & groupbit) ? home_rank(tag[i]) : -1;
+    xc_dest[i] = r;
+    if (r >= 0) xc_scount[r]++;
+  }
+  xc_sdispl.assign(P, 0);
+  for (int r = 1; r < P; r++) xc_sdispl[r] = xc_sdispl[r - 1] + xc_scount[r - 1];
+  const int nsend = xc_sdispl[P - 1] + xc_scount[P - 1];
+  xc_sendbuf.resize((size_t)nsend * D);
+
+  xc_fill = xc_sdispl;
+  for (int i = 0; i < nlocal; i++) {
+    const int r = xc_dest[i];
+    if (r < 0) continue;
+    double *p = &xc_sendbuf[(size_t)(xc_fill[r]++) * D];
+    p[0] = ubuf(tag[i]).d;
+    p[1] = mass[type[i]];
+    p[2] = v[i][0];
+    p[3] = v[i][1];
+    p[4] = v[i][2];
+    if (D == 8) domain->unmap(x[i], image[i], &p[5]);
+  }
+}
+
+/* ======================================================================
+   push_velocity_frame — host-side velocity gather into vel_buf[ibuf].
+   Replicated layout: tag-indexed write + MPI_Allreduce(SUM).  Distributed
+   layout: pack by home rank, MPI_Alltoallv, unpack into home slots.
+   Default impl used by the CPU build of fix_xpt.  Overridden in
+   FixXPTKokkos to do the gather on the GPU.
 
    Owner-only: caller in accumulate_frame() already gated on owns_buffer.
 ====================================================================== */
 void FixXPT::push_velocity_frame(int ibuf)
 {
+  if (distributed()) {
+    const int D = do_molecule ? 8 : 5;
+    const int P = nprocs;
+    pack_home_datums(D);
+
+    xc_rcount.assign(P, 0);
+    MPI_Alltoall(xc_scount.data(), 1, MPI_INT, xc_rcount.data(), 1, MPI_INT, world);
+    xc_rdispl.assign(P, 0);
+    bigint nrecv = 0, nsend = 0;
+    for (int r = 0; r < P; r++) {
+      xc_rdispl[r] = (int)(nrecv * D);
+      nrecv += xc_rcount[r];
+      nsend += xc_scount[r];
+    }
+    // MPI counts are int elements: hold below 2^31 doubles each way.
+    if (nrecv * D > MAXSMALLINT || nsend * D > MAXSMALLINT)
+      error->one(FLERR, "fix xpt: per-rank exchange exceeds the MPI count limit");
+    // Scale counts and displacements from datums to doubles in place; the
+    // next pack recomputes them.
+    for (int r = 0; r < P; r++) {
+      xc_scount[r] *= D;
+      xc_sdispl[r] *= D;
+      xc_rcount[r] *= D;
+    }
+    xc_recvbuf.resize((size_t)nrecv * D);
+    MPI_Alltoallv(xc_sendbuf.data(), xc_scount.data(), xc_sdispl.data(), MPI_DOUBLE,
+                  xc_recvbuf.data(), xc_rcount.data(), xc_rdispl.data(), MPI_DOUBLE, world);
+
+    // An atom that left the group mid-window is not shipped and reads zero,
+    // as the zero-initialised Allreduce operand gives in the replicated layout.
+    if (buffer_precision == BUFFER_FP32)
+      std::fill(&vel_buf_f[ibuf][0][0], &vel_buf_f[ibuf][0][0] + (size_t)natom_buf * 3, 0.0f);
+    else
+      std::fill(&vel_buf[ibuf][0][0], &vel_buf[ibuf][0][0] + (size_t)natom_buf * 3, 0.0);
+    std::fill(home_recv.begin(), home_recv.end(), 0);
+#ifdef FIX_XPT_DEBUG_VERIFY
+    int ndrop = 0;
+#endif
+    for (bigint k = 0; k < nrecv; k++) {
+      const double *p = &xc_recvbuf[(size_t)k * D];
+      const int j = home_index((tagint) ubuf(p[0]).i);
+      if (j < 0) {   // joined the group after the window started
+#ifdef FIX_XPT_DEBUG_VERIFY
+        ndrop++;
+#endif
+        continue;
+      }
+      for (int d = 0; d < 3; d++) vwrite(ibuf, j, d, p[2 + d]);
+      mass_buf[j]  = p[1];
+      home_recv[j] = 1;
+      if (D == 8)
+        for (int d = 0; d < 3; d++) home_xu[j][d] = p[5 + d];
+    }
+#ifdef FIX_XPT_DEBUG_VERIFY
+    {
+      // Every window member arrives exactly once at frame 0; later frames
+      // may lose atoms that left a dynamic group but never gain any.
+      int loc[3] = {(int)nrecv, 0, ndrop}, glob[3] = {0, 0, 0};
+      for (int r = 0; r < P; r++) if (r != me) loc[1] += xc_rcount[r] / D;
+      MPI_Allreduce(loc, glob, 3, MPI_INT, MPI_SUM, world);
+      if (iframe == 0) {
+        dbg_recv_min = dbg_recv_max = glob[0];
+        dbg_nonself_frames = dbg_dropped = dbg_frames = 0;
+      }
+      dbg_recv_min = std::min(dbg_recv_min, glob[0]);
+      dbg_recv_max = std::max(dbg_recv_max, glob[0]);
+      if (glob[1] > 0) dbg_nonself_frames++;
+      dbg_dropped += glob[2];
+      dbg_frames++;
+      if (iframe == 0 && glob[0] != ng_window)
+        error->all(FLERR, "fix xpt verify: frame 0 received {} datums for {} window members",
+                   glob[0], ng_window);
+      if (glob[0] > ng_window)
+        error->all(FLERR, "fix xpt verify: frame {} received {} datums for {} window members",
+                   iframe, glob[0], ng_window);
+      if (iframe == nframes - 1 && me == 0)
+        utils::logmesg(lmp, "FixXPT::{}-{} verify: {} frames, N_g {}, datums/frame min {} max {}, "
+                       "frames with off-rank datums {}, unmatched datums {}\n",
+                       id, group->names[igroup], dbg_frames, ng_window, dbg_recv_min,
+                       dbg_recv_max, dbg_nonself_frames, dbg_dropped);
+    }
+#endif
+    return;
+  }
+
   int    *mask  = atom->mask;
   int    *tag   = atom->tag;
   int    *type  = atom->type;
@@ -955,6 +1363,39 @@ void FixXPT::accumulate_mol_frame()
   // of atom->v means this routine doesn't depend on host atom->v being fresh —
   // important under KOKKOS where the device integrator may leave it stale.
   const int ibuf_vel = mt_vel_buf_single_frame ? 0 : iframe;
+
+  // Distributed layout: every home molecule is complete on this rank, so the
+  // projection needs no communication; the channels are reduced at window end.
+  if (distributed()) {
+    assemble_mol_frame_home(ibuf_mol, ibuf_vel);
+    if (correlator == CORR_MULTITAU && mt_n_levels > 0) {
+      // Streams hold home units and are MPI-reduced at finalisation.  The
+      // trans/rot streams span the capacity nmol_buf (zero weight past
+      // nm_home), so a rank homing no molecule still pushes every frame and
+      // count_seen agrees across ranks.
+      if (mt_trans.n_units != nmol_buf)
+        multitau_stream_alloc(mt_trans, nmol_buf, /*distributed=*/true);
+      if (mt_rot.n_units != nmol_buf)
+        multitau_stream_alloc(mt_rot,   nmol_buf, /*distributed=*/true);
+      if (mt_vib.n_units != natom_buf)
+        multitau_stream_alloc(mt_vib,   natom_buf, /*distributed=*/true);
+      if (iframe == 0) {
+        multitau_stream_reset(mt_trans);
+        multitau_stream_reset(mt_rot);
+        multitau_stream_reset(mt_vib);
+      }
+      mt_molecular_active = true;
+      FIXXPT_TIME(t_multitau_push);
+      multitau_stream_push(mt_trans, 0, &com_vel_buf[ibuf_mol][0][0],
+                           molmass_home.data(), nullptr);
+      multitau_stream_push(mt_rot,   0, &omega_buf[ibuf_mol][0][0],
+                           molunit_home.data(), nullptr);
+      multitau_stream_push(mt_vib,   0, &vib_vel_buf[ibuf_mol][0][0],
+                           mass_buf, &group_slots);
+    }
+    return;
+  }
+
   // The per-atom loops of Passes 1/2/3 are extracted into virtual hooks
   // (compute_mol_pass{1,2,3}_atoms) so the KOKKOS class can run them on-device.
 
@@ -1110,6 +1551,119 @@ void FixXPT::accumulate_mol_frame()
                               mass_buf,    &group_slots);
     }
   }
+}
+
+/* ======================================================================
+   assemble_mol_frame_home — molecular decomposition on the home rank
+   (distributed layout).  The home rank holds every atom of its molecules
+   (velocity in vel_buf, unwrapped position in home_xu), so COM, L, I, ω
+   and the vibrational residual follow the formulae of accumulate_mol_frame
+   without partial sums.  Atoms not received this frame (left the group
+   mid-window) are skipped and read zero vibrational velocity, as in the
+   replicated passes.
+====================================================================== */
+
+void FixXPT::assemble_mol_frame_home(int ibuf_mol, int ibuf_vel)
+{
+  const int m0 = mol_lo[me];
+  for (int ml = 0; ml < nm_home; ml++) {
+    const int m  = m0 + ml;
+    const int j0 = home_mol_start[ml], j1 = home_mol_start[ml + 1];
+
+    // COM velocity and position (same divisor as the replicated path).
+    double p[3] = {0, 0, 0}, r[3] = {0, 0, 0};
+    for (int j = j0; j < j1; j++) {
+      if (!home_recv[j]) continue;
+      const double mi = mass_buf[j];
+      for (int d = 0; d < 3; d++) {
+        p[d] += mi * vread(ibuf_vel, j, d);
+        r[d] += mi * home_xu[j][d];
+      }
+    }
+    const double M = molmass[m];
+    double vcom[3], rcom[3];
+    for (int d = 0; d < 3; d++) {
+      vcom[d] = p[d] / M;
+      rcom[d] = r[d] / M;
+    }
+
+    // L = Σ m r'×v' and I_αβ = Σ m (|r'|² δ_αβ − r'_α r'_β)
+    double L[3] = {0, 0, 0};
+    double Imat[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    for (int j = j0; j < j1; j++) {
+      if (!home_recv[j]) continue;
+      const double mi = mass_buf[j];
+      double rp[3], vp[3];
+      for (int d = 0; d < 3; d++) {
+        rp[d] = home_xu[j][d] - rcom[d];
+        vp[d] = vread(ibuf_vel, j, d) - vcom[d];
+      }
+      double Lc[3];
+      cross3(rp, vp, Lc);
+      for (int d = 0; d < 3; d++) L[d] += mi * Lc[d];
+      const double r2 = rp[0]*rp[0] + rp[1]*rp[1] + rp[2]*rp[2];
+      for (int a = 0; a < 3; a++)
+        for (int b = 0; b < 3; b++) {
+          const double delta = (a == b) ? 1.0 : 0.0;
+          Imat[a][b] += mi * (r2 * delta - rp[a] * rp[b]);
+        }
+    }
+
+    // ω = I⁻¹·L in the principal frame, back to the lab frame.
+    double eig[3], V[3][3];
+    mat3_sym_eigen(Imat, eig, V);
+    double Lv[3] = {0, 0, 0};
+    for (int a = 0; a < 3; a++)
+      for (int d = 0; d < 3; d++) Lv[a] += V[d][a] * L[d];
+    const int lin_start = mol_is_linear[m] ? 1 : 0;
+    double anguv_body[3] = {0, 0, 0};
+    double omega_body[3] = {0, 0, 0};
+    for (int a = lin_start; a < 3; a++) {
+      if (eig[a] > 1e-30) {
+        anguv_body[a] = Lv[a] / sqrt(eig[a]);
+        omega_body[a] = Lv[a] / eig[a];
+      }
+    }
+    double anguv_lab[3] = {0, 0, 0}, omega_lab[3] = {0, 0, 0};
+    for (int d = 0; d < 3; d++)
+      for (int a = 0; a < 3; a++) {
+        anguv_lab[d] += V[d][a] * anguv_body[a];
+        omega_lab[d] += V[d][a] * omega_body[a];
+      }
+    for (int d = 0; d < 3; d++) {
+      com_vel_buf[ibuf_mol][ml][d] = vcom[d];
+      omega_buf[ibuf_mol][ml][d]   = anguv_lab[d];
+      angmom_buf[ibuf_mol][ml][d]  = omega_lab[d];
+    }
+    if (mol_is_linear[m]) {
+      mol_inertia[ml][0] += eig[1];
+      mol_inertia[ml][1] += eig[2];
+    } else {
+      for (int d = 0; d < 3; d++) mol_inertia[ml][d] += eig[d];
+    }
+
+    // Vibrational residual v_vib = v − v_COM − ω×r'.
+    for (int j = j0; j < j1; j++) {
+      if (!home_recv[j]) {
+        for (int d = 0; d < 3; d++) vibwrite(ibuf_mol, j, d, 0.0);
+        continue;
+      }
+      double rp[3];
+      for (int d = 0; d < 3; d++) rp[d] = home_xu[j][d] - rcom[d];
+      double vrot[3];
+      vrot[0] = omega_lab[1]*rp[2] - omega_lab[2]*rp[1];
+      vrot[1] = omega_lab[2]*rp[0] - omega_lab[0]*rp[2];
+      vrot[2] = omega_lab[0]*rp[1] - omega_lab[1]*rp[0];
+      for (int d = 0; d < 3; d++)
+        vibwrite(ibuf_mol, j, d, vread(ibuf_vel, j, d) - vcom[d] - vrot[d]);
+    }
+  }
+  mol_inertia_count++;
+
+  // Keep the unused tail of the vibrational row finite: the multi-tau vib
+  // stream copies the whole row into its downsampling accumulator.
+  for (int j = n_home; j < natom_buf; j++)
+    for (int d = 0; d < 3; d++) vibwrite(ibuf_mol, j, d, 0.0);
 }
 
 /* ======================================================================

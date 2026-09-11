@@ -19,7 +19,7 @@ Syntax
 
 .. parsed-literal::
 
-   keyword = *classical* or *normalize* or *epsilon* or *sigma* or *mass* or *volume* or *molecule* or *mode* or *refinement* or *r2pt_delta* or *linear* or *symmetry* or *show_split* or *use_sim_z* or *allow_mixed_molecules* or *correlator* or *mt_M* or *mt_P* or *mt_S* or *mt_L* or *nsamples* or *maxfreq* or *dnu* or *max_memory_gb* or *buffer_precision*
+   keyword = *classical* or *normalize* or *epsilon* or *sigma* or *mass* or *volume* or *molecule* or *mode* or *refinement* or *r2pt_delta* or *linear* or *symmetry* or *show_split* or *use_sim_z* or *allow_mixed_molecules* or *correlator* or *mt_M* or *mt_P* or *mt_S* or *mt_L* or *nsamples* or *maxfreq* or *dnu* or *max_memory_gb* or *buffer_precision* or *buffer_layout*
      *classical* value = none
        compute and write classical thermodynamic quantities in addition to quantum
      *normalize* value = none
@@ -127,9 +127,11 @@ Syntax
        no coarsening.  Like *maxfreq* this is a disk-output knob only —
        the 2PT solve stays at full resolution.
      *max_memory_gb* value = G
-       per-fix RAM budget in GB (default 0 = off).  When > 0, *Nframes* is
-       automatically reduced to the largest power of two whose velocity
-       buffers fit within the budget, trading window length for memory.
+       per-fix, per-rank RAM budget in GB (default 0 = off).  When > 0,
+       *Nframes* is automatically reduced to the largest power of two whose
+       velocity buffers fit within the budget, trading window length for
+       memory.  With *buffer_layout distributed* a rank holds about 1/P of
+       the group, so the same budget admits a longer window on more ranks.
      *buffer_precision* value = fp64 or fp32
        storage precision of the velocity buffers (default fp64).  *fp32*
        halves the footprint of the largest per-fix buffers at a loss of
@@ -137,6 +139,13 @@ Syntax
        state variables (*D*, *f*, *S(0)*, :math:`\mu`, *T_vac*) are
        typically unaffected (< 0.5%), but the heat capacity *Cv* can be
        precision-sensitive (a warning is logged).
+     *buffer_layout* value = distributed or replicated
+       where the frame history lives (default distributed).  *distributed*
+       gives every group atom one home rank per window (whole molecules with
+       *molecule*), so a rank holds about 1/P of the history; *replicated*
+       keeps the whole history on every rank.  Both give the same results to
+       floating-point summation order.  See the parallel memory layout
+       section below.
 
 Examples
 """"""""
@@ -270,6 +279,29 @@ where :math:`N_s` = *Nframes* / 2 and :math:`\Delta t_\text{vac}` =
 
 ----------
 
+**Parallel memory layout (buffer_layout keyword)**
+
+The frame history (per-atom velocities and, with *molecule*, the per-atom
+vibrational residuals and the per-molecule translational, angular and
+angular-momentum channels) is the dominant memory cost of the fix.  With the
+default *buffer_layout distributed*, every group atom has one *home* rank for
+the window.  At each window start the group's sorted atom list (with
+*molecule*, its sorted molecule list weighted by atom count, so a molecule is
+never split) is cut into P contiguous blocks of equal atom count.  Every
+sampled step, each rank sends the velocities of its local group atoms (with
+*molecule*, also their unwrapped positions) to their home ranks with one
+``MPI_Alltoallv``.  The home rank holds complete molecules, evaluates the
+translational, angular and vibrational projections locally and transforms its
+own atoms and molecules; each spectrum is summed over ranks once per window.
+A rank therefore stores about 1/P of the history and exchanges O(N/P) data per
+frame.
+
+*buffer_layout replicated* keeps a complete copy of the history on every rank
+and assembles each frame with ``MPI_Allreduce``.  The two layouts agree to
+floating-point summation order.
+
+----------
+
 **Sharing one velocity buffer across fixes**
 
 The velocity buffer is the dominant memory cost of the fix, and comparing
@@ -278,10 +310,10 @@ setting would ordinarily allocate one complete velocity history per setting.
 
 It does not.  At the start of each ``run`` a fix checks whether an earlier
 *fix xpt* is accumulating the same trajectory, and reuses its buffer if so.
-The configurations must agree on *group*, *Nframes*, *Nevery*, *correlator*
-and the *molecule* setting.  The *mode* and *refinement* keywords are
-deliberately **not** part of that test, because both act on the density of
-states rather than on the trajectory:
+The configurations must agree on *group*, *Nframes*, *Nevery*, *correlator*,
+*buffer_precision*, *buffer_layout* and the *molecule* setting.  The *mode*
+and *refinement* keywords are deliberately **not** part of that test, because
+both act on the density of states rather than on the trajectory:
 
 .. code-block:: LAMMPS
 
@@ -292,11 +324,12 @@ states rather than on the trajectory:
    fix s5 all xpt 5 4096 ar.r2pt  mode 2PT refinement r2pt
    fix s6 all xpt 5 4096 ar.3pt   mode 3PT
 
-This costs one velocity history, not six.  The first fix owns the buffer; the
-rest re-point at it and skip frame accumulation, so they add no memory, no
-per-frame staging and no per-frame ``MPI_Allreduce``.  Each still performs its
-own window-end analysis, which is the part that differs between settings.
-Sharing is reported once per consumer in the log::
+This costs one velocity history, not six.  The first fix owns the buffer (and,
+with *buffer_layout distributed*, its home layout); the rest re-point at it and
+skip frame accumulation, so they add no memory, no per-frame staging and no
+per-frame communication.  Each still performs its own window-end analysis,
+which is the part that differs between settings.  Sharing is reported once per
+consumer in the log::
 
    FixXPT::s2-all: sharing velocity buffer with FixXPT::s1-all
                    (nevery=5, nframes=4096, FFT, do_molecule=0)
@@ -464,9 +497,10 @@ falls back to the truncation-robust main-lobe cutoff and logs a warning.
 
 **Multi-tau VACF correlator (correlator keyword)**
 
-The default *correlator fft* path allocates a
-:math:`N_\text{frames} \times N_\text{atom} \times 3` velocity buffer
-plus per-channel molecular buffers, and computes the VAC via the
+The default *correlator fft* path stores a
+:math:`N_\text{frames} \times N_\text{atom} \times 3` velocity history
+plus per-channel molecular buffers (spread over the ranks, about 1/P each,
+with *buffer_layout distributed*), and computes the VAC via the
 Wiener-Khinchin FFT pipeline.  Fine for short runs and small systems;
 the memory bottleneck on long supercooled-water trajectories, multi-ns
 slabs, and 10 k-atom molecular systems.
@@ -531,13 +565,16 @@ For the restore to take (otherwise the saved state is silently dropped with
   mismatch logs ``restart multi-tau shape mismatch ... discarding state``.
 - The *correlator multitau* and *mt_** settings must match the original fix.
 
+The restart holds the correlator sums reduced over all ranks, so reanalysis
+is exact on any number of ranks, independent of the rank count that wrote it.
+A restart written by fix-xpt 1.0.0 holds only rank 0's partial sums; it is
+restored on one rank and refused, with a log message, on more.
+
 KOKKOS (``xpt/kk``) note: a restart written on another machine may store the
 fix style unstripped (``xpt/kk``).  Re-run **without** ``-sf kk`` (so the live
-style is not stripped to ``2pt`` and stops matching the stored string), keep
-KOKKOS active with ``-k on``, request the integrator explicitly with
-``run_style verlet/kk``, and use **one MPI rank per GPU** (``mpirun -np 1``) —
-``write_restart`` stores only rank 0's partial VAC, so single-rank reanalysis
-is exact.
+style is not stripped to ``xpt`` and stops matching the stored string), keep
+KOKKOS active with ``-k on``, and request the integrator explicitly with
+``run_style verlet/kk``.
 
 .. code-block:: LAMMPS
 
@@ -816,6 +853,10 @@ built-in KISS FFT).
 
 The *molecule* keyword requires ``atom_style molecular`` or ``atom_style full``.
 
+The fix follows atoms by ID and weights them by per-type mass, so it requires
+atom IDs (``atom_modify id yes``, the default) and per-type masses (not
+per-atom ``rmass``).
+
 The Desjarlais memory-function model (*mode 2PT refinement desjarlais*) is valid for
 both monoatomic and molecular modes.  It incurs a small overhead from the
 bisection search for :math:`B_g` (at most 80 iterations per window per component).
@@ -837,8 +878,9 @@ Default
 
 The option defaults are *mode* = ``2PT``, *refinement* = ``rigorous``,
 *symmetry* = ``C1`` (:math:`\sigma_\text{rot}` = 1 derived from the symmetry
-lookup), and *correlator* = ``fft`` (with *mt_M* = 32, *mt_P* = 16,
-*mt_S* = 2, *mt_L* = 0 = auto when *correlator multitau* is selected).
+lookup), *correlator* = ``fft`` (with *mt_M* = 32, *mt_P* = 16,
+*mt_S* = 2, *mt_L* = 0 = auto when *correlator multitau* is selected),
+*buffer_precision* = ``fp64`` and *buffer_layout* = ``distributed``.
 The *classical*, *normalize*, *molecule*, *linear*, and *show_split* flags
 are off.  The volume is taken from the simulation box.
 

@@ -49,29 +49,41 @@ built-in FFT support (FFTW3, MKL, or the bundled KISS FFT). It does **not
 build LAMMPS for you** — copy the sources into your LAMMPS tree and
 rebuild with your usual toolchain.
 
-**With `make`:**
+The six core files form the `XPT` package. The two KOKKOS files
+(`fix_xpt_kokkos.*`, the `xpt/kk` styles) follow the LAMMPS convention for
+accelerator variants and go in the `KOKKOS` package directory, so a build
+without KOKKOS never compiles them:
 
 ```bash
 mkdir -p /path/to/lammps/src/XPT
-cp src/*.cpp src/*.h /path/to/lammps/src/XPT/
-cp doc/fix_xpt.rst  /path/to/lammps/doc/src/    # optional docs
-
-cd /path/to/lammps/src
-make yes-xpt           # register the package
-make mpi               # or your usual target
+cp src/fix_xpt.h src/fix_xpt.cpp src/fix_xpt_accumulate.cpp src/fix_xpt_analysis.cpp \
+   src/fix_xpt_entropy.cpp src/fix_xpt_const.h /path/to/lammps/src/XPT/
+cp src/fix_xpt_kokkos.h src/fix_xpt_kokkos.cpp /path/to/lammps/src/KOKKOS/   # xpt/kk (optional)
+cp doc/fix_xpt.rst /path/to/lammps/doc/src/                                     # docs (optional)
 ```
 
-**With CMake:**
+**With CMake:** LAMMPS's CMake builds only the packages it lists, so add `XPT`
+to the `set(STANDARD_PACKAGES ...)` list in `cmake/CMakeLists.txt` once. Then
 
 ```bash
-cp src/*.cpp src/*.h /path/to/lammps/src/XPT/
 cd /path/to/lammps/build
 cmake ../cmake -D PKG_XPT=yes [ -D PKG_KOKKOS=yes ... ]
 cmake --build . -j
 ```
 
-The KOKKOS acceleration files (`fix_xpt_kokkos.*`) are compiled only when
-the `KOKKOS` package is also enabled.
+With `PKG_KOKKOS=yes`, CMake compiles `src/KOKKOS/fix_xpt_kokkos.cpp` and
+registers `xpt/kk`, `xpt/kk/device` and `xpt/kk/host`.
+
+**With `make`:**
+
+```bash
+cd /path/to/lammps/src
+make yes-xpt           # copies the XPT package into src/
+make mpi               # or your usual target
+```
+
+For the `xpt/kk` styles in a `make` build, install KOKKOS as usual and copy
+`fix_xpt_kokkos.h` and `fix_xpt_kokkos.cpp` into `src/` as well.
 
 ## Usage
 
@@ -127,7 +139,7 @@ It does not here. A fix checks, at the start of each `run`, whether an earlier
 `fix xpt` is accumulating the same trajectory, and reuses its buffer if so. The
 configurations must agree on
 
-    group   ·   Nframes   ·   Nevery   ·   correlator   ·   molecule on/off
+    group · Nframes · Nevery · correlator · buffer_precision · buffer_layout · molecule on/off
 
 `mode` and `refinement` are deliberately *not* part of that test, because both
 act on the density of states rather than on the trajectory. So this
@@ -141,9 +153,10 @@ fix s5 all xpt 5 4096 ar.r2pt  mode 2PT refinement r2pt
 fix s6 all xpt 5 4096 ar.3pt   mode 3PT
 ```
 
-costs one velocity history, not six. `s1` owns the buffer; `s2`–`s6` re-point at
-it and skip frame accumulation, so they add no memory, no per-frame staging and
-no per-frame `MPI_Allreduce`. Each still runs its own window-end analysis, which
+costs one velocity history, not six. `s1` owns the buffer (and, with the default
+distributed layout, its home layout); `s2`–`s6` re-point at it and skip frame
+accumulation, so they add no memory, no per-frame staging and no per-frame
+communication. Each still runs its own window-end analysis, which
 is the part that actually differs. Sharing is reported in the log:
 
     FixXPT::s2-all: sharing velocity buffer with FixXPT::s1-all (nevery=5, nframes=4096, FFT, do_molecule=0)

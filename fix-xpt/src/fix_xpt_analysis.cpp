@@ -234,6 +234,11 @@ void FixXPT::run_analysis()
         id, group->names[igroup],
         Lreq, MP, mt_S, (int)t_merged.size(), ns, prefix);
     }
+#ifdef FIX_XPT_DEBUG_VERIFY
+    if (me == 0)
+      utils::logmesg(lmp, "FixXPT::{}-{} verify: count_seen L0 scalar {} (ns {})\n",
+                     id, group->names[igroup], mt_count_seen.empty() ? -1L : mt_count_seen[0], ns);
+#endif
   } else {
     FIXXPT_TIME(t_vac_atom);
     // ── Default Wiener-Khinchin path ─────────────────────────────────
@@ -701,9 +706,12 @@ void FixXPT::run_analysis()
 
   if (do_molecule && nmol_group > 0 && mol_inertia_count_use > 0) {
 
-    // Average inertia per molecule
-    std::vector<double> I_avg(nmol_group * 3, 0.0);
-    for (int m = 0; m < nmol_group; m++)
+    // Average inertia per molecule.  Distributed layout: this rank's home
+    // molecules, global index mol_lo[me] + ml.
+    const int nm_rank  = distributed() ? nm_home : nmol_group;
+    const int m_offset = distributed() ? mol_lo[me] : 0;
+    std::vector<double> I_avg(nm_rank * 3, 0.0);
+    for (int m = 0; m < nm_rank; m++)
       for (int d = 0; d < 3; d++)
         I_avg[m*3+d] = mol_inertia_use[m][d] / mol_inertia_count_use;
 
@@ -770,11 +778,30 @@ void FixXPT::run_analysis()
       stream_to_vac(mt_trans, vac_trans);
       stream_to_vac(mt_rot,   vac_rot);
       stream_to_vac(mt_vib,   vac_vib);
+#ifdef FIX_XPT_DEBUG_VERIFY
+      if (me == 0)
+        utils::logmesg(lmp, "FixXPT::{}-{} verify: count_seen L0 scalar {} trans {} rot {} vib {}\n",
+                       id, group->names[igroup],
+                       mt_count_seen.empty() ? -1L : mt_count_seen[0],
+                       mt_trans.count_seen.empty() ? -1L : mt_trans.count_seen[0],
+                       mt_rot.count_seen.empty()   ? -1L : mt_rot.count_seen[0],
+                       mt_vib.count_seen.empty()   ? -1L : mt_vib.count_seen[0]);
+#endif
     } else {
       // ── FFT path (default) ───────────────────────────────────────────
       std::vector<double> pwr_trans(N_fft, 0.0), pwr_rot(N_fft, 0.0);
-      pwr_from_mols(com_vel_buf, nmol_group, molmass, pwr_trans, fft_buf, fft_vac, ns);
-      pwr_from_mols(omega_buf,   nmol_group, std::vector<double>(nmol_group, 1.0), pwr_rot, fft_buf, fft_vac, ns);
+      if (distributed()) {
+        // Each rank transforms its home molecules; one reduction per channel.
+        std::vector<double> pwr_local(N_fft, 0.0);
+        pwr_from_mols(com_vel_buf, nm_home, molmass_home, pwr_local, fft_buf, fft_vac, ns);
+        MPI_Allreduce(pwr_local.data(), pwr_trans.data(), N_fft, MPI_DOUBLE, MPI_SUM, world);
+        std::fill(pwr_local.begin(), pwr_local.end(), 0.0);
+        pwr_from_mols(omega_buf, nm_home, molunit_home, pwr_local, fft_buf, fft_vac, ns);
+        MPI_Allreduce(pwr_local.data(), pwr_rot.data(), N_fft, MPI_DOUBLE, MPI_SUM, world);
+      } else {
+        pwr_from_mols(com_vel_buf, nmol_group, molmass, pwr_trans, fft_buf, fft_vac, ns);
+        pwr_from_mols(omega_buf,   nmol_group, std::vector<double>(nmol_group, 1.0), pwr_rot, fft_buf, fft_vac, ns);
+      }
 #ifdef FIX_XPT_DEBUG
       t_vac_mol += MPI_Wtime() - t0;
 #endif
@@ -1071,13 +1098,16 @@ void FixXPT::run_analysis()
 
       // Rotational gas entropy weight: rigid-rotor Sackur-Tetrode
       // For each molecule, S_rot_gas per mode = hs_entropy_rot(...)
+      // hs_entropy_rot is nonlinear in I, so each molecule is evaluated where
+      // its inertia lives and the distributed partial sums are reduced.
       double ws_rot_gas = 0.0;
-      for (int m = 0; m < nmol_group; m++) {
+      for (int ml = 0; ml < nm_rank; ml++) {
+        const int m = m_offset + ml;
         int istart = mol_is_linear[m] ? 1 : 0;
         int nrot_m = mol_is_linear[m] ? 2 : 3;
-        double I1 = I_avg[m*3 + istart];
-        double I2 = (nrot_m >= 2) ? I_avg[m*3 + istart+1] : I1;
-        double I3 = (nrot_m >= 3) ? I_avg[m*3 + istart+2] : 0.0;
+        double I1 = I_avg[ml*3 + istart];
+        double I2 = (nrot_m >= 2) ? I_avg[ml*3 + istart+1] : I1;
+        double I3 = (nrot_m >= 3) ? I_avg[ml*3 + istart+2] : 0.0;
         if (units_lj) {
           double I_s = (I1*I2 > 0) ? sqrt(I1*I2) : I1;
           ws_rot_gas += hs_entropy_rot_lj(y_rot, I_s, hsdf_rot/nrot_m,
@@ -1086,6 +1116,11 @@ void FixXPT::run_analysis()
           ws_rot_gas += hs_entropy_rot(y_rot, I1, I2, I3,
                                        hsdf_rot/nrot_m, T_rot_mol, rotsym, mol_is_linear[m]);
         }
+      }
+      if (distributed()) {
+        double ws_sum = 0.0;
+        MPI_Allreduce(&ws_rot_gas, &ws_sum, 1, MPI_DOUBLE, MPI_SUM, world);
+        ws_rot_gas = ws_sum;
       }
       ws_rot_gas /= nmol_group;  // average per-molecule, in same units as dos integration
 

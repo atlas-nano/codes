@@ -149,6 +149,7 @@ FixXPT::FixXPT(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   mt_trans.n_units        = 0;
   mt_rot.n_units          = 0;
   mt_vib.n_units          = 0;
+  mt_trans.is_distributed = mt_rot.is_distributed = mt_vib.is_distributed = false;
   do_molecule  = 0;
   allow_mixed_molecules = 0;
   symmetry             = "C1";
@@ -166,6 +167,12 @@ FixXPT::FixXPT(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   vib_vel_buf_f = nullptr;
   vel_buf_f     = nullptr;
   buffer_precision = BUFFER_FP64;
+  buffer_layout    = LAYOUT_DISTRIBUTED;
+  ng_window    = 0;
+  n_home       = 0;
+  nm_home      = 0;
+  nmol_buf     = 0;
+  home_xu      = nullptr;
   mol_inertia  = nullptr;
   mol_inertia_count = 0;
   mol_topology_generation = 0;
@@ -675,6 +682,15 @@ void FixXPT::set_option(const char *key, const char *value)
     else
       error->all(FLERR, "fix xpt: buffer_precision must be 'fp64' or 'fp32'");
   }
+  // Frame-buffer layout: distributed = O(N/P) per rank; replicated = every
+  // rank holds the whole history (validation reference).
+  else if (!strcasecmp(key, "buffer_layout")) {
+    need_val(value);
+    if      (!strcasecmp(value, "distributed")) buffer_layout = LAYOUT_DISTRIBUTED;
+    else if (!strcasecmp(value, "replicated"))  buffer_layout = LAYOUT_REPLICATED;
+    else
+      error->all(FLERR, "fix xpt: buffer_layout must be 'distributed' or 'replicated'");
+  }
   else if (!strcasecmp(key, "correlator")) {
     need_val(value);
     if (!strcasecmp(value, "fft"))            correlator = CORR_FFT;
@@ -858,11 +874,15 @@ FixXPT::~FixXPT()
       c->buffer_owner = nullptr;
       // Null the consumer's host pointer aliases so its destructor won't touch freed storage.
       c->vel_buf = nullptr;
+      c->vel_buf_f = nullptr;
       c->mass_buf = nullptr;
       c->com_vel_buf = nullptr;
       c->omega_buf = nullptr;
       c->angmom_buf = nullptr;
       c->vib_vel_buf = nullptr;
+      c->vib_vel_buf_f = nullptr;
+      c->home_xu = nullptr;
+      if (c->distributed()) c->mol_inertia = nullptr;   // aliased from the owner
     }
     buffer_consumers.clear();
   }
@@ -875,20 +895,29 @@ FixXPT::~FixXPT()
   }
   if (owns_buffer) {
     memory->destroy(vel_buf);
+    memory->destroy(vel_buf_f);
     memory->destroy(mass_buf);
     memory->destroy(com_vel_buf);
     memory->destroy(omega_buf);
     memory->destroy(angmom_buf);
     memory->destroy(vib_vel_buf);
+    memory->destroy(vib_vel_buf_f);
+    memory->destroy(home_xu);
   } else {
     vel_buf = nullptr;
+    vel_buf_f = nullptr;
     mass_buf = nullptr;
     com_vel_buf = nullptr;
     omega_buf = nullptr;
     angmom_buf = nullptr;
     vib_vel_buf = nullptr;
+    vib_vel_buf_f = nullptr;
+    home_xu = nullptr;
+    // A distributed consumer aliases the owner's mol_inertia (it is sized to
+    // the owner's home molecules); a replicated consumer owns its own.
+    if (distributed()) mol_inertia = nullptr;
   }
-  memory->destroy(mol_inertia);  // per-fix, always free
+  memory->destroy(mol_inertia);  // per-fix unless aliased (nulled above)
   // Persistent FFT scratch (created in init(), valid through to fix teardown).
   // Destroy BEFORE LAMMPS's KSpace cleanup runs (Force::~Force) so FFTW3's
   // plan cache is in a consistent state when PPPM destroys its own FFT3d.
@@ -1040,9 +1069,21 @@ void FixXPT::init()
   // window-stream.  Estimate at init time using group->count(igroup) for
   // the group atom count (exact for static groups; conservative upper
   // bound for dynamic groups that grow during the run).
+  // Atoms are routed and indexed by ID; without IDs they cannot be followed.
+  if (!atom->tag_enable)
+    error->all(FLERR, "fix xpt requires atom IDs (atom_modify id yes)");
+  // Masses are read per type (atom->mass); an atom style with per-atom
+  // masses (rmass) leaves that table null.
+  if (atom->rmass_flag || !atom->mass)
+    error->all(FLERR, "fix xpt requires per-type masses; atom styles with per-atom "
+                      "masses (rmass) are not supported");
+
   if (max_memory_gb > 0.0 && nframes > 0) {
+    // The budget is per rank: in the distributed layout a rank holds about
+    // 1/nprocs of the group's history.
     const bigint n_in_group = group->count(igroup);
-    const int    n_atom_est = std::max<int>(1, (int)n_in_group);
+    const bigint n_per_rank = distributed() ? (n_in_group + nprocs - 1) / nprocs : n_in_group;
+    const int    n_atom_est = std::max<int>(1, (int)n_per_rank);
     // Conservative per-atom-per-frame footprint (in bytes) — covers
     // vel_buf + vib_vel_buf + 3 mol channels indexed by nmol ≤ natom:
     //   24 (vel) + 24 (vib if molecular) + 3·24 (3 mol bufs assuming
@@ -1101,7 +1142,9 @@ void FixXPT::init()
           other->igroup      == this->igroup     &&
           other->nframes     == this->nframes    &&
           other->nevery      == this->nevery     &&
-          other->do_molecule == this->do_molecule) {
+          other->do_molecule == this->do_molecule &&
+          other->buffer_precision == this->buffer_precision &&
+          other->buffer_layout    == this->buffer_layout) {
         buffer_owner = other;
         owns_buffer  = false;
         other->buffer_consumers.push_back(this);
@@ -1256,7 +1299,12 @@ void FixXPT::init()
     // segfaulted accumulate_mol_frame on the very next snapshot.  Topology and
     // buffers are rebuilt at every window start anyway (the iframe==0
     // prologue), so skipping here is safe for dynamic groups too.
-    if (iframe == 0) {
+    if (iframe == 0 && distributed()) {
+      // Per-molecule frame buffers are sized to this rank's home molecules,
+      // which the window-start prologue decides; nothing to allocate here.
+      build_mol_topology();
+      if (!owns_buffer) sync_buffer_pointers_from_owner();
+    } else if (iframe == 0) {
     const int init_old_nmol = nmol_group;
     build_mol_topology();
     // Reallocate ONLY on first allocation or a genuine topology change:
@@ -1441,7 +1489,22 @@ void FixXPT::setup(int /*vflag*/)
   // push_velocity_frame. setup() runs before any end_of_step on EVERY run, so (re)allocate here:
   // owner allocates (grow_buf reallocs when the pointer is null even if natom_buf was restored),
   // consumer re-points to the owner (whose setup ran first — owner is earlier in modify->fix[]).
-  if (owns_buffer) {
+  if (distributed()) {
+    // Build the home layout here as well as at each window start, so the
+    // buffers exist (and are reported) from the start of the run.  A run that
+    // continues a window keeps the layout it has.
+    if (owns_buffer && iframe == 0) {
+      int *amask = atom->mask; tagint *atag = atom->tag; int an = atom->nlocal;
+      int maxTag_local = 0;
+      for (int i = 0; i < an; i++)
+        if ((amask[i] & groupbit) && (int)atag[i] > maxTag_local) maxTag_local = (int)atag[i];
+      int maxTag_global = 0;
+      MPI_Allreduce(&maxTag_local, &maxTag_global, 1, MPI_INT, MPI_MAX, world);
+      if (maxTag_global > 0) build_home_layout();
+    } else if (!owns_buffer) {
+      sync_buffer_pointers_from_owner();
+    }
+  } else if (owns_buffer) {
     int *amask = atom->mask; tagint *atag = atom->tag; int an = atom->nlocal;
     int maxTag_local = 0;
     for (int i = 0; i < an; i++)
@@ -1495,8 +1558,8 @@ void FixXPT::end_of_step()
   // while other ranks call it — a classic MPI collective mismatch.
   //
   // For group "all" (pe_peratom=false):
-  //   compute_scalar() is collective; group_slots is never empty on any rank.
-  //   Per-rank guard is safe (always true).
+  //   compute_scalar() is collective; it is called unconditionally because
+  //   group_slots can be empty on a rank.
   //
   // For subgroups (pe_peratom=true):
   //   compute_peratom() is local-only (fine to skip on empty-slot ranks).
@@ -1506,13 +1569,14 @@ void FixXPT::end_of_step()
     double E_inst = 0.0;
 
     if (!pe_peratom) {
-      // Group "all": group_slots is always non-empty (atoms on every rank);
-      // compute_scalar() is collective — guard is safe here.
       // Ibuf selects vel_buf row 0 when grow_buf allocated a single-
       // frame buffer (multitau with no matrix-VAC dependency) and the
       // live iframe otherwise.
       const int ibuf = mt_vel_buf_single_frame ? 0 : iframe;
-      if (!group_slots.empty()) {
+      // Every rank must reach the Allreduce and the collective
+      // compute_scalar() below; a rank holding no group atoms (possible in
+      // the distributed layout, or a vacuum region) contributes zero.
+      {
         double ke_raw_local = 0.0;
         for (int slot : group_slots) {
           double m = mass_buf[slot];
@@ -1712,16 +1776,38 @@ void FixXPT::post_run()
 
     if (do_molecule) build_mol_topology();
 
-    group_slots.clear();
     int maxTag_local = 0;
-    for (int i = 0; i < nlocal; i++) {
-      if (!(mask[i] & groupbit)) continue;
-      group_slots.push_back(tag[i] - 1);
-      if (tag[i] > maxTag_local) maxTag_local = tag[i];
-    }
+    for (int i = 0; i < nlocal; i++)
+      if ((mask[i] & groupbit) && tag[i] > maxTag_local) maxTag_local = tag[i];
     int maxTag_global = 0;
     MPI_Allreduce(&maxTag_local, &maxTag_global, 1, MPI_INT, MPI_MAX, world);
-    if (maxTag_global > 0 && owns_buffer) grow_buf(maxTag_global);
+    if (distributed()) {
+      // Keep a layout that a previous run in this process built (its window
+      // accumulators and inertia belong to it); build one if none exists.
+      // The pushed frame fills mass_buf, which the analysis normalises by;
+      // it lands in row 0, the single multi-tau frame, which no analysis reads.
+      const bool have_layout = (natom_buf > 0) && (vel_buf || vel_buf_f);
+      if (maxTag_global > 0 && owns_buffer) {
+        if (!have_layout) build_home_layout();
+        push_velocity_frame(0);
+      }
+    } else {
+      group_slots.clear();
+      for (int i = 0; i < nlocal; i++)
+        if (mask[i] & groupbit) group_slots.push_back(tag[i] - 1);
+      if (maxTag_global > 0 && owns_buffer) {
+        grow_buf(maxTag_global);
+        // A freshly allocated mass_buf holds no masses (no frame was pushed
+        // after read_restart); the analysis normalises by them.
+        double *amass = atom->mass;
+        int    *atype = atom->type;
+        for (int i = 0; i < nlocal; i++)
+          if ((mask[i] & groupbit) && tag[i] >= 1 && tag[i] <= natom_buf)
+            mass_buf[tag[i] - 1] = amass[atype[i]];
+      }
+      int ng_local = (int)group_slots.size();
+      MPI_Allreduce(&ng_local, &ng_window, 1, MPI_INT, MPI_SUM, world);
+    }
 
     fix_dof_window = 0;
     for (const auto &ifix : modify->get_fix_list())
@@ -1737,23 +1823,24 @@ void FixXPT::post_run()
     if (correlator == CORR_MULTITAU && owns_buffer) {
       if (mt_n_levels == 0) multitau_alloc(natom_buf);
       if (do_molecule && nmol_group > 0) {
-        // Size each molecular stream to the SAVED n_units from the restart
-        // stash, not to the live nmol_group / natom_buf.  grow_buf above
-        // rounds natom_buf up (max(n, natom_buf+32)), so the live vib width
-        // (e.g. 2624) would not equal the saved width (2592) and the restore
-        // would silently skip the vib stream → all-zero vac_vib → inf in the
-        // 2PT solve.  Fall back to the live sizes when there is no stash.
-        int nu_trans = nmol_group, nu_rot = nmol_group, nu_vib = natom_buf;
+        // Live widths, as accumulate_mol_frame allocates them.  A v1 restart
+        // (pre-1.0.1, single rank) is restored stream by stream at its SAVED
+        // widths: grow_buf rounds natom_buf up (max(n, natom_buf+32)), so the
+        // live vib width (e.g. 2624) need not equal the saved one (2592), and
+        // a mismatch would skip the vib stream → all-zero vac_vib → inf in
+        // the 2PT solve.  v2 stores global sums, so any width takes them.
+        const bool dist = distributed();
+        int nu_trans = dist ? nmol_buf : nmol_group, nu_rot = nu_trans, nu_vib = natom_buf;
         if (mt_restart_pending && (int)mt_restart_stash.size() >= 9
-            && (int)mt_restart_stash[5] /*mol_in*/) {
+            && (int)mt_restart_stash[5] /*mol_in*/ && mt_restart_stash[0] < 200.0) {
           nu_trans = (int)mt_restart_stash[6];
           nu_rot   = (int)mt_restart_stash[7];
           nu_vib   = (int)mt_restart_stash[8];
         }
-        if (mt_trans.n_units != nu_trans)
-          multitau_stream_alloc(mt_trans, nu_trans, /*distributed=*/false);
-        if (mt_rot.n_units != nu_rot)
-          multitau_stream_alloc(mt_rot,   nu_rot,   /*distributed=*/false);
+        if (mt_trans.n_units != nu_trans || mt_trans.is_distributed != dist)
+          multitau_stream_alloc(mt_trans, nu_trans, dist);
+        if (mt_rot.n_units != nu_rot || mt_rot.is_distributed != dist)
+          multitau_stream_alloc(mt_rot,   nu_rot,   dist);
         if (mt_vib.n_units != nu_vib)
           multitau_stream_alloc(mt_vib,   nu_vib,   /*distributed=*/true);
         mt_molecular_active = true;
@@ -1789,11 +1876,13 @@ void FixXPT::post_run()
   // of the setup() short-run guard.  iframe is left in place on the FFT
   // path so a follow-up `run` continues filling the window.
   if (correlator == CORR_MULTITAU && iframe > nframes / 4) {
-    int saved = nframes;
-    nframes   = iframe;
-    if (nframes > 0) run_analysis();
-    nframes   = saved;
-    iframe    = 0;
+    // Analysed as a sub-window snapshot (the nsamples path): the multi-tau
+    // sums are per-lag averages, so the window length enters only through
+    // the DOS grid, and the persistent FFT plan is sized for nframes.
+    // Substituting the tail length for nframes ran that plan on a shorter
+    // mirrored VAC and produced a wrong DOS.
+    run_analysis();
+    iframe = 0;
   }
 }
 
@@ -1836,18 +1925,31 @@ double FixXPT::memory_usage()
     bytes += (double)natom_buf * d;                              // mass_buf (always FP64)
   }
 
-  // Molecular mode buffers.
+  // Molecular mode buffers: single-frame under multi-tau (the rings hold the
+  // history); molecule extent nmol_group (replicated) or nmol_buf (distributed).
   if (do_molecule && nmol_group > 0) {
+    const int    mol_frames = (correlator == CORR_MULTITAU) ? 1 : nframes;
+    const double nmol_ext   = distributed() ? (double)nmol_buf : (double)nmol_group;
     if (owns_buffer) {
-      bytes += (double)nframes  * nmol_group * 3 * d;        // com_vel_buf
-      bytes += (double)nframes  * nmol_group * 3 * d;        // omega_buf
-      bytes += (double)nframes  * nmol_group * 3 * d;        // angmom_buf
+      bytes += 3.0 * mol_frames * nmol_ext * 3 * d;          // com_vel / omega / angmom
       const double per_elem = (buffer_precision == BUFFER_FP32)
                             ? (double)sizeof(float)
                             : d;
-      bytes += (double)nframes * natom_buf * 3 * per_elem;   // vib_vel_buf
+      bytes += (double)mol_frames * natom_buf * 3 * per_elem; // vib_vel_buf
+      if (home_xu) bytes += (double)natom_buf * 3 * d;        // home_xu
     }
-    bytes += (double)nmol_group * 3 * d;                     // mol_inertia (per-fix)
+    if (owns_buffer || !distributed())
+      bytes += nmol_ext * 3 * d;                              // mol_inertia
+  }
+
+  // Distributed-layout bookkeeping and per-frame exchange scratch.
+  if (distributed() && owns_buffer) {
+    bytes += (double)home_tag.capacity() * sizeof(tagint);
+    bytes += (double)(home_mol_start.capacity() + mol_lo.capacity()) * sizeof(int);
+    bytes += (double)home_tag_lo.capacity() * sizeof(tagint);
+    bytes += (double)(molmass_home.capacity() + molunit_home.capacity()) * d;
+    bytes += (double)home_recv.capacity();
+    bytes += (double)(xc_sendbuf.capacity() + xc_recvbuf.capacity()) * d;
   }
 
   // FFT scratch (always present once init() ran).
@@ -1891,24 +1993,72 @@ double FixXPT::memory_usage()
 
    Restart payload size:  ~few KB even at production scale.
 
-   Wire format (flat double array):
-     header  : [correlator, mt_n_levels, mt_MP, mt_natom_ring,
+   Wire format v2 (flat double array; every c_sum is the global sum):
+     header  : [correlator (+100 inertia block, +200 = v2), mt_n_levels,
+                mt_MP, N_g (group atoms),
                 matrix_flag (always 0; reader skips legacy matrix payloads),
-                mol_active, mt_trans.n_units, mt_rot.n_units, mt_vib.n_units]
+                mol_active, nmol (trans), nmol (rot), N_g (vib); 0 = stream absent]
      scalar  : c_sum[L*MP], c_cnt[L*MP], count_seen[L], head[L], down_n[L]
      mol_tr  : c_sum[L*MP], count_seen[L], head[L], down_n[L]
      mol_rot : (same shape)
      mol_vib : (same shape)
+     inertia : mol_inertia_count, mol_inertia[nmol*3] (global molecule order)
+   v1 (pre-1.0.1, no +200) stored rank 0's partial sums and per-rank
+   widths in fields 3 and 6-8; it is restored on a single rank only.
    All ints/longs encoded as doubles (matches fix_ave_correlate_long.cpp).
 ====================================================================== */
 
 void FixXPT::write_restart(FILE *fp)
 {
-  if (comm->me != 0) return;
-
-  // Defer work until we have something to persist.
+  // Modify::write_restart calls this on every rank, so the per-rank partial
+  // accumulators are reduced here, collectively, and rank 0 writes.  Format
+  // v2 (+200 on field 0): every c_sum holds the global sum, fields 3 and 6-8
+  // hold global counts, and the inertia block covers all molecules in global
+  // molecule order.  Every branch below is taken identically on all ranks.
   const bool has_scalar = (correlator == CORR_MULTITAU && mt_n_levels > 0);
   const bool has_mol    = mt_molecular_active;
+  const bool write_inertia = (has_mol && mol_inertia
+                              && mol_inertia_count > 0 && nmol_group > 0);
+
+  int ng_local = (int)group_slots.size(), ng = 0;
+  MPI_Allreduce(&ng_local, &ng, 1, MPI_INT, MPI_SUM, world);
+
+  // The scalar accumulator is a per-rank partial in both layouts; a stream
+  // is one when its is_distributed flag says so.
+  auto global_sum = [&](const std::vector<double> &v, bool partial) {
+    std::vector<double> g(v);
+    if (partial)
+      MPI_Allreduce(v.data(), g.data(), (int)v.size(), MPI_DOUBLE, MPI_SUM, world);
+    return g;
+  };
+  std::vector<std::vector<double>> sc_sum;
+  if (has_scalar)
+    for (int l = 0; l < mt_n_levels; l++) sc_sum.push_back(global_sum(mt_c_sum[l], true));
+  std::vector<std::vector<double>> st_sum[3];
+  const MultiTauStream *streams[3] = {&mt_trans, &mt_rot, &mt_vib};
+  if (has_mol)
+    for (int c = 0; c < 3; c++)
+      if (streams[c]->n_units > 0)
+        for (const auto &cs : streams[c]->c_sum)
+          st_sum[c].push_back(global_sum(cs, streams[c]->is_distributed));
+
+  std::vector<double> inertia_all;
+  if (write_inertia) {
+    if (distributed()) {
+      std::vector<int> cnt(nprocs), dsp(nprocs);
+      for (int r = 0; r < nprocs; r++) {
+        cnt[r] = 3 * (mol_lo[r + 1] - mol_lo[r]);
+        dsp[r] = 3 * mol_lo[r];
+      }
+      inertia_all.assign((size_t)nmol_group * 3, 0.0);
+      MPI_Gatherv(&mol_inertia[0][0], 3 * nm_home, MPI_DOUBLE, inertia_all.data(),
+                  cnt.data(), dsp.data(), MPI_DOUBLE, 0, world);
+    } else {
+      inertia_all.assign(&mol_inertia[0][0], &mol_inertia[0][0] + (size_t)nmol_group * 3);
+    }
+  }
+
+  if (comm->me != 0) return;
 
   // Compute total double count.
   const int hdr = 9;
@@ -1932,27 +2082,25 @@ void FixXPT::write_restart(FILE *fp)
   // rotational-gas I_avg restores exactly on a `run 0` reanalysis.  Appended
   // after the streams; signalled by +100 on the header correlator field so
   // older restarts (which omit it) still parse.  Length: 1 + nmol_group*3.
-  const bool write_inertia = (has_mol && mol_inertia
-                              && mol_inertia_count > 0 && nmol_group > 0);
   if (write_inertia) n += 1 + (long)nmol_group * 3;
 
   std::vector<double> list((size_t)n, 0.0);
   long m = 0;
-  list[m++] = (double)(correlator + (write_inertia ? 100 : 0));
+  list[m++] = (double)(correlator + (write_inertia ? 100 : 0) + 200);
   list[m++] = (double)(has_scalar ? mt_n_levels : 0);
   list[m++] = (double)mt_MP;
-  list[m++] = (double)mt_natom_ring;
+  list[m++] = (double)ng;
   list[m++] = 0.0;   // matrix-stream flag (streams removed; always 0)
   list[m++] = has_mol ? 1.0 : 0.0;
-  list[m++] = (double)mt_trans.n_units;
-  list[m++] = (double)mt_rot.n_units;
-  list[m++] = (double)mt_vib.n_units;
+  list[m++] = (mt_trans.n_units > 0) ? (double)nmol_group : 0.0;
+  list[m++] = (mt_rot.n_units   > 0) ? (double)nmol_group : 0.0;
+  list[m++] = (mt_vib.n_units   > 0) ? (double)ng         : 0.0;
 
   if (has_scalar) {
     const int L  = mt_n_levels;
     const int MP = mt_MP;
     for (int l = 0; l < L; l++)
-      for (int k = 0; k < MP; k++) list[m++] = mt_c_sum[l][k];
+      for (int k = 0; k < MP; k++) list[m++] = sc_sum[l][k];
     for (int l = 0; l < L; l++)
       for (int k = 0; k < MP; k++) list[m++] = (double)mt_c_cnt[l][k];
     for (int l = 0; l < L; l++) list[m++] = (double)mt_count_seen[l];
@@ -1960,23 +2108,24 @@ void FixXPT::write_restart(FILE *fp)
     for (int l = 0; l < L; l++) list[m++] = (double)mt_down_n[l];
   }
 
-  auto write_stream = [&](const MultiTauStream &s) {
+  auto write_stream = [&](const MultiTauStream &s, const std::vector<std::vector<double>> &cs) {
     if (s.n_units <= 0) return;
     const int L  = (int)s.v_ring.size();
     const int MP = mt_MP;
     for (int l = 0; l < L; l++)
-      for (int k = 0; k < MP; k++) list[m++] = s.c_sum[l][k];
+      for (int k = 0; k < MP; k++) list[m++] = cs[l][k];
     for (int l = 0; l < L; l++) list[m++] = (double)s.count_seen[l];
     for (int l = 0; l < L; l++) list[m++] = (double)s.head[l];
     for (int l = 0; l < L; l++) list[m++] = (double)s.down_n[l];
   };
   if (has_mol) {
-    write_stream(mt_trans); write_stream(mt_rot); write_stream(mt_vib);
+    write_stream(mt_trans, st_sum[0]);
+    write_stream(mt_rot,   st_sum[1]);
+    write_stream(mt_vib,   st_sum[2]);
   }
   if (write_inertia) {
     list[m++] = (double)mol_inertia_count;
-    for (int mm = 0; mm < nmol_group; mm++)
-      for (int d = 0; d < 3; d++) list[m++] = mol_inertia[mm][d];
+    for (double I : inertia_all) list[m++] = I;
   }
 
   const int size = (int)(n * sizeof(double));
@@ -1996,10 +2145,12 @@ void FixXPT::restart(char *buf)
   // buffers exist (the multitau `run 0` reanalysis path in post_run()).  The
   // payload length is recoverable from the fixed 9-double header.
   auto *list = (double *) buf;
-  // header[0] = correlator (+100 when an Option-1 mol_inertia block follows).
+  // header[0] = correlator (+100 when an Option-1 mol_inertia block follows,
+  // +200 for the v2 format).  The length rule is the same for v1 and v2.
   const int raw0          = (int)list[0];
-  const bool inertia_in   = (raw0 >= 100);
-  const int correlator_in = inertia_in ? (raw0 - 100) : raw0;
+  const int raw_v1        = (raw0 >= 200) ? (raw0 - 200) : raw0;
+  const bool inertia_in   = (raw_v1 >= 100);
+  const int correlator_in = inertia_in ? (raw_v1 - 100) : raw_v1;
   if (correlator_in != correlator) return;   // not our correlator kind
 
   const int Lin        = (int)list[1];

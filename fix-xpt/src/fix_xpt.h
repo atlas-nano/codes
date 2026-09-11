@@ -335,12 +335,14 @@ class FixXPT : public Fix {
   double max_memory_gb;
 
   // --- molecular velocity/angular-momentum buffers ---
-  double ***com_vel_buf;  // [nframes][nmol_group][3]  COM velocity
-  double ***omega_buf;    // [nframes][nmol_group][3]  anguv = V·(ω_body×√I) per molecule (ANGUL)
-  double ***angmom_buf;   // [nframes][nmol_group][3]  angular momentum L (lab frame)
+  // Molecule extent: nmol_group (replicated layout) or nmol_buf, indexed by
+  // home molecule ml (distributed layout).
+  double ***com_vel_buf;  // [nframes][nmol][3]  COM velocity
+  double ***omega_buf;    // [nframes][nmol][3]  anguv = V·(ω_body×√I) per molecule (ANGUL)
+  double ***angmom_buf;   // [nframes][nmol][3]  angular momentum L (lab frame)
   double ***vib_vel_buf;  // [nframes][natom_buf][3]   per-atom vibrational velocity v_i−v_COM−ω×r′_i (FP64 default)
   float  ***vib_vel_buf_f; // FP32 alternate; null when buffer_precision == BUFFER_FP64
-  double  **mol_inertia;  // [nmol_group][3] principal moments, window-averaged (reset each window)
+  double  **mol_inertia;  // [nmol][3] principal moments, window-averaged (reset each window)
   int       mol_inertia_count; // frames accumulated for mol_inertia
 
   // --- pressure averaging ---
@@ -407,14 +409,58 @@ class FixXPT : public Fix {
     else                                  vib_vel_buf[ibuf][s][d] = v;
   }
   double *mass_buf;     // [natom_buf]  atom masses (g/mol per atom)
-  std::vector<int> group_slots;  // tag-1 slot indices for local group atoms
+  std::vector<int> group_slots;  // slots this rank transforms (see buffer layout below)
+
+  // --- buffer layout -------------------------------------------------------
+  // REPLICATED: every rank holds the whole group's frame history; a slot is
+  // tag - 1 and group_slots lists the atoms local at window start.
+  // DISTRIBUTED (default): every group atom has one home rank, chosen by a
+  // membership-balanced block partition rebuilt at each window start (whole
+  // molecules in molecular mode).  Each frame, ranks ship their local group
+  // atoms home with one MPI_Alltoallv; a slot is a home-local index
+  // 0..n_home-1 and group_slots is the identity, so every loop over
+  // (vel_buf, group_slots, mass_buf) and its molecular siblings is unchanged.
+  enum BufferLayout { LAYOUT_REPLICATED = 0, LAYOUT_DISTRIBUTED = 1 };
+  int buffer_layout;
+  bool distributed() const { return buffer_layout == LAYOUT_DISTRIBUTED; }
+  int ng_window;                        // global group atoms at window start
+#ifdef FIX_XPT_DEBUG_VERIFY
+  // Exchange accounting for the migration-stress check (design 7.2): datums
+  // received per frame, frames carrying off-rank datums, unmatched datums.
+  // Compile with -DFIX_XPT_DEBUG_VERIFY; adds one Allreduce per frame.
+  int dbg_recv_min, dbg_recv_max, dbg_nonself_frames, dbg_dropped, dbg_frames;
+#endif
+  std::vector<tagint> home_tag_lo;      // [P+1] first member tag homed on rank r (monatomic)
+  std::vector<int>    mol_lo;           // [P+1] first molecule index homed on rank r (molecular)
+  int n_home;                           // atoms homed on this rank this window (<= natom_buf)
+  int nm_home;                          // molecules homed on this rank this window (<= nmol_buf)
+  int nmol_buf;                         // capacity of the per-molecule frame arrays
+  std::vector<tagint> home_tag;         // [n_home] tag of home atom j (by molecule, then tag)
+  std::vector<int>    home_mol_start;   // [nm_home+1] home atoms of molecule ml
+  std::vector<double> molmass_home;     // [nmol_buf] mass of home molecule ml; 0 beyond nm_home
+  std::vector<double> molunit_home;     // [nmol_buf] 1 for ml < nm_home, 0 beyond
+  std::vector<unsigned char> home_recv; // [n_home] atom received this frame
+  double **home_xu;                     // [natom_buf][3] unwrapped positions (molecular)
+  std::vector<int>    xc_scount, xc_sdispl, xc_rcount, xc_rdispl, xc_fill, xc_dest;
+  std::vector<double> xc_sendbuf, xc_recvbuf;
+  void build_home_layout();
+  void grow_mol_buf(int nm);
+  int home_rank(tagint tag) const;
+  int home_index(tagint tag) const;
+  // Pack this rank's local group atoms as D-double datums sorted by home
+  // rank into xc_sendbuf; fills xc_scount / xc_sdispl.  Virtual so a device
+  // class can pack on the GPU.
+  virtual void pack_home_datums(int D);
+  // Complete-molecule projection on the home rank (COM, L, I, omega, vib).
+  void assemble_mol_frame_home(int ibuf_mol, int ibuf_vel);
 
   // --- shared velocity buffer ----------------------------------
   // When multiple fix_xpt share the same (group, nevery, nframes,
   // correlator, do_molecule), only the first ("owner") allocates the
   // velocity buffers; "consumers" alias the owner's storage via
-  // sync_buffer_pointers_from_owner().  The owner does the per-step push +
-  // Allreduce + mol decomposition; consumers just read in their analysis.
+  // sync_buffer_pointers_from_owner() (and, in the distributed layout, its
+  // home layout).  The owner does the per-step push (exchange or Allreduce)
+  // + mol decomposition; consumers just read in their analysis.
   // Multi-tau rings (mt_*) and per-fix topology are NOT shared.
   FixXPT *buffer_owner;             // points at first matching fix (= this if owner)
   bool   owns_buffer;               // true if this instance allocates/frees buffers

@@ -47,10 +47,15 @@ class FixXPTKokkos : public FixXPT {
   void setup(int) override;
   void end_of_step() override;
 
-  // GPU velocity gather: device gather → D2H + MPI_Allreduce(SUM) into the
+  // Replicated layout: device gather → D2H + MPI_Allreduce(SUM) into the
   // base host vel_buf, then mirror the frame into vel_buf_view.
+  // Distributed layout: sync the atom arrays to host and run the base pack /
+  // MPI_Alltoallv / home assembly; the transforms and the multi-tau inner
+  // products stay on the device.
   void push_velocity_frame(int ibuf) override;
 
+  // Passes 1-3 serve the replicated layout only (the distributed layout
+  // assembles whole molecules on their home rank, on the host).
   // Device Pass 1 (COM momentum + mass-weighted position): atomic_add into
   // device scratch, D2H back into lcom_p/lcom_r; host MPI_Allreduce stays in
   // the base class.

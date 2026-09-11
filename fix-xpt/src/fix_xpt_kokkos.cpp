@@ -88,6 +88,8 @@ void FixXPTKokkos<DeviceType>::init()
                       "supported by the KOKKOS path (V1).  Use the "
                       "plain `xpt` style on the CPU build, or stay "
                       "at fp64 with /kk.");
+  // The base init builds the molecule topology from host tag/mask/type/molecule.
+  atomKK->sync(Host, TAG_MASK | MASK_MASK | TYPE_MASK | MOLECULE_MASK);
   FixXPT::init();
   // Per-type mass is on a separate sync chain from the per-atom views
   // (it doesn't change during a run); push it to device once here.
@@ -100,6 +102,9 @@ void FixXPTKokkos<DeviceType>::init()
 template<class DeviceType>
 void FixXPTKokkos<DeviceType>::setup(int vflag)
 {
+  // The base setup sizes the buffers (and builds the home layout) from host
+  // tag/mask; ModifyKokkos syncs only to this fix's execution space.
+  atomKK->sync(Host, TAG_MASK | MASK_MASK | TYPE_MASK | MOLECULE_MASK);
   FixXPT::setup(vflag);
 }
 
@@ -108,10 +113,18 @@ void FixXPTKokkos<DeviceType>::setup(int vflag)
 template<class DeviceType>
 void FixXPTKokkos<DeviceType>::end_of_step()
 {
+  // The window-start prologue (molecule topology, home layout, slot list)
+  // reads host tag/mask/type/molecule; ModifyKokkos syncs only to this fix's
+  // execution space, so bring them to host here.
+  if (iframe == 0)
+    atomKK->sync(Host, TAG_MASK | MASK_MASK | TYPE_MASK | MOLECULE_MASK);
+  // A subgroup's energy accumulation sums per-atom KE from host atom->v.
+  if (pe_peratom)
+    atomKK->sync(Host, V_MASK | MASK_MASK | TYPE_MASK);
   // Run the base-class step (populates host vel_buf), then lazily (re)size
   // the device-side View to match.
   FixXPT::end_of_step();
-  (void) ensure_vel_buf_view_sized();
+  if (!distributed()) (void) ensure_vel_buf_view_sized();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -121,7 +134,9 @@ bool FixXPTKokkos<DeviceType>::ensure_vel_buf_view_sized()
 {
   // Mirror the host vel_buf sizes (vel_buf_frames × natom_buf × 3 doubles;
   // frames = 1 for multi-tau single-frame, else nframes) on the device.
-  // No-op if extents already match.
+  // No-op if extents already match.  The distributed layout keeps no device
+  // frame: only the replicated passes read one.
+  if (distributed()) return false;
   if (vel_buf == nullptr || natom_buf <= 0) return false;
   const size_t frames = mt_vel_buf_single_frame ? size_t(1) : size_t(nframes);
   const size_t natoms = size_t(natom_buf);
@@ -176,6 +191,10 @@ void FixXPTKokkos<DeviceType>::sync_buffer_pointers_from_owner()
 /* ----------------------------------------------------------------------
    push_velocity_frame — KOKKOS override.
 
+   Distributed layout: sync the per-atom arrays the host pack reads and run
+   the base-class exchange (pack by home rank, MPI_Alltoallv, unpack).
+
+   Replicated layout:
    1. Sync atomKK per-atom views to DeviceType (V, mask, tag, type).
    2. parallel_for over local atoms; each thread passing the group filter
       writes its velocity into a tag-indexed slot of a per-rank flat buffer
@@ -188,6 +207,13 @@ void FixXPTKokkos<DeviceType>::sync_buffer_pointers_from_owner()
 template<class DeviceType>
 void FixXPTKokkos<DeviceType>::push_velocity_frame(int ibuf)
 {
+  // Distributed layout: the host pack reads x, v, image, mask, tag, type.
+  if (distributed()) {
+    atomKK->sync(Host, X_MASK | V_MASK | IMAGE_MASK | MASK_MASK | TAG_MASK | TYPE_MASK);
+    FixXPT::push_velocity_frame(ibuf);
+    return;
+  }
+
   // Ensure the device-side velocity buffer and the persistent scratch
   // gather buffers (push_vel_local_d / push_mass_local_d) are sized.
   ensure_vel_buf_view_sized();
