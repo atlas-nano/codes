@@ -7,8 +7,9 @@ heat capacity *C*ᵥ, zero-point energy, and self-diffusivity *D* directly
 from the equilibrium MD velocity trajectory — in memory, with **no
 trajectory files and no post-processing step**.
 
-**License:** MIT · **Archived on Zenodo:**
-https://doi.org/10.5281/zenodo.21456030 · **Accompanying paper:**
+**License:** MIT · **Archived on Zenodo:** v1.0.1
+https://doi.org/10.5281/zenodo.22729714 (all versions:
+https://doi.org/10.5281/zenodo.21456029) · **Accompanying paper:**
 *"On-the-fly Estimation of Quantum-Corrected Thermodynamics in LAMMPS"*
 (in preparation). The
 stand-alone Python post-processor
@@ -105,6 +106,7 @@ every `Nframes` samples; write results to `prefix.thermo`, `prefix.pwr`
 | `classical` | also output classical (non-quantum) thermodynamics |
 | `normalize` | per-atom / per-molecule output |
 | `correlator fft\|multitau` | VACF algorithm (default `fft`) |
+| `buffer_layout distributed\|replicated` | where the frame history lives (default `distributed`: one home rank per atom, ~1/P of the history per rank). On a single rank an atomic group selects `replicated`, which is faster there |
 | `epsilon`/`sigma`/`mass` | physical LJ parameters for ħ\* scaling in `lj` units |
 | `volume v_name` | override the cell volume (e.g. slab geometries) |
 
@@ -227,10 +229,34 @@ channels, rigid-water constraints, and the INI-file input syntax.
 - `prefix.pwr` — the density of states (gas / solid / cage columns).
 - `prefix.vac` — the velocity autocorrelation function.
 
+## Changes
+
+- **1.0.1**
+  - **Distributed frame buffers** (`buffer_layout distributed`, the new default): every group atom
+    has one home rank per window and each frame travels home in one `MPI_Alltoallv`, so a rank stores
+    about 1/P of the history instead of all of it. Node memory for a 5184-atom water window on 128
+    ranks falls from 309 GB to 15 GB, and the fix's cost now falls with the rank and GPU count.
+    `buffer_layout replicated` keeps the 1.0.0 behaviour and is selected automatically on a single
+    rank for atomic groups, where it is faster.
+  - **Restart format v2**: multi-rank restarts store global sums, so a `run 0` reanalysis reproduces
+    the window it restarted from on any rank count. A v1 file is refused on more than one rank.
+  - `xpt/kk` no longer crashes on monatomic systems (the push buffers were never allocated when
+    `nmol_group == 0`).
+  - `xpt/kk` subgroup `E_md` and `Cv` were computed from stale host velocities; the host copy is now
+    synced before the energy tally. VACF-derived quantities were unaffected.
+  - `run 0` restart reanalysis filled no masses, so a restarted monatomic analysis returned
+    fluidicity 1.0 and D = 0.
+  - Multi-tau: the first window dropped frame 0 of the molecular streams, a dynamic group dropped
+    frame 0 on every window, and a partial final window was transformed at the wrong FFT length.
+  - Atom styles with per-atom masses (`rmass`) are refused at init rather than segfaulting.
+  - The build recipe in this README failed on a stock LAMMPS tree: the Kokkos sources belong in
+    `src/KOKKOS/`, and `XPT` must be listed in `STANDARD_PACKAGES`.
+
 ## Citing
 
 If you use FixXPT, please cite this release
-([10.5281/zenodo.21456030](https://doi.org/10.5281/zenodo.21456030)), the
+([10.5281/zenodo.22729714](https://doi.org/10.5281/zenodo.22729714), all versions:
+[10.5281/zenodo.21456029](https://doi.org/10.5281/zenodo.21456029)), the
 accompanying LAMMPS-implementation paper (in preparation), and — for the
 3PT cage — Buarque, Gascon & Pascal, *J. Chem. Phys.* (in review, 2026).
 The `py-xPT` post-processor is archived at

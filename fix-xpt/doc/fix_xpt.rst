@@ -301,6 +301,12 @@ frame.
 and assembles each frame with ``MPI_Allreduce``.  The two layouts agree to
 floating-point summation order.
 
+Molecular mode also holds the map from atom tag to molecule index on every
+rank, one ``int`` per tag (4 bytes x the largest atom ID), rebuilt at each
+window start; it is the one structure whose size does not fall with the rank
+count.  Atom IDs are assumed to fit in a 32-bit ``int`` here, so groups whose
+largest tag exceeds 2^31 are not supported.
+
 On one rank the two layouts hold the same history, so the choice is only a
 speed one.  Unless *buffer_layout* is given explicitly, a single-rank run
 without *molecule* therefore uses *replicated*, which indexes a frame by atom

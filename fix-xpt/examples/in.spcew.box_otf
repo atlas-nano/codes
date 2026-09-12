@@ -52,7 +52,7 @@ print                .
 velocity             all create ${rtemp} 123981231 dist gaussian
 fix                  2 all nvt temp ${rtemp} ${rtemp} 100.0 tloop 10 ploop 10
 dump                 1 all custom 1000 ${sname}.${rtemp}K.prod.lammps id type xu yu zu vx vy vz
-run                  10000 # run for 15 ns
+run                  10000 # 10000 steps x 1 fs = 10 ps
 unfix                2
 
 print                "================================================"
