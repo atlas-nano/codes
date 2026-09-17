@@ -4,7 +4,7 @@
 energy, and heat capacity of a liquid or solid from a *single* equilibrium
 molecular-dynamics trajectory, via the velocity density of states (DoS).
 
-**License:** MIT · **Archived on Zenodo:** v1.0.1 https://doi.org/10.5281/zenodo.22697489 (all versions: https://doi.org/10.5281/zenodo.21447745)
+**License:** MIT · **Archived on Zenodo:** v2.0.0 https://doi.org/10.5281/zenodo.22810635 (all versions: https://doi.org/10.5281/zenodo.21447745)
 
 This is the reference implementation accompanying the manuscript *"An anharmonic
 liquid-entropy functional from the Mori–Zwanzig memory kernel."* It computes:
@@ -93,6 +93,11 @@ normalize = 1
 - `mode = 2PT` + `refinement = rigorous|lin2003|desjarlais|r2pt`
 - `mode = 3PT` — the bare memory cage on top of rigorous-HS 2PT (the published
   3PT). `refinement` must be `none`.
+- `cage_ws = consistent|legacy` (`[thermodynamics]`, default `consistent`) — the harmonic
+  weight subtracted in the cage reweighting. `consistent` gives the quantum entropy the
+  correction computed with the quantum harmonic weight and the classical entropy the one
+  computed with the classical weight; `legacy` applies the classical weight to both, as
+  releases up to 1.0.1 did.
 
 ## Outputs
 - `<prefix>.thermo` — entropy (`S_q`), cage entropy (`S_cage`), free energy
@@ -107,6 +112,15 @@ pytest                       # end-to-end regression on a bundled mini LJ trajec
 ```
 
 ## Changes
+- **2.0.0** — the 3PT cage correction subtracts the harmonic weight that matches the
+  entropy it corrects: the quantum weight for `S_q`/`A_q`/`μ_q` and the classical weight for
+  the classical quantities (`cage_ws = consistent`, the new default). Releases up to 1.0.1
+  subtracted the classical weight for both, which overstates the quantum cage entropy where the
+  cage band lies at high frequency relative to k_BT. For Lennard-Jones liquids and liquid metals
+  the change is below 0.01 k_B per atom; for the rotational cage of liquid water at 298 K it is
+  about −0.8 J mol⁻¹ K⁻¹. `cage_ws = legacy` reproduces the 1.0.1 values. Also fixed: the
+  `S_cage` row of the `.thermo` file was not converted for `out_units = lj`, `kcal/mol` or
+  `eV`, and was reported in J mol⁻¹ K⁻¹ under those unit labels.
 - **1.0.1** — linear molecules: the rotational temperature of the axial slot now uses the
   perpendicular moment. The axial moment of a linear molecule is zero to roundoff, and in
   1.0.0 the sign of that roundoff decided whether the rotational gas term diverged or was

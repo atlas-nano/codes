@@ -109,6 +109,11 @@ class Config:
     cage_nf_run: int = 1          # consecutive sub-noise-floor VACF lags before truncation
     cage_taper: str = "none"      # none|hann half-Hann taper on the truncated kernel
     cage_tail_tol: float = 1.0    # auto-cutoff -> main-lobe fallback tolerance
+    # Harmonic weight subtracted in the cage reweighting.  "consistent" (default):
+    # the quantum entropy/free energy receive the correction computed with the
+    # quantum W_s, the classical ones with the classical W_s.  "legacy": the
+    # classical W_s for both (3pt-v1 / 1.0.1 behaviour, to reproduce old results).
+    cage_ws: str = "consistent"
     # Debye gas-gate: zero the fluidicity in (near-)crystalline channels, where a
     # ~ν² low-frequency DoS would otherwise be credited spurious diffusive entropy.
     # "none" (default) = off; "debye" applies the gate; "debye_warn" only reports.

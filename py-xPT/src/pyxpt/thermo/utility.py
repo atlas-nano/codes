@@ -1658,8 +1658,17 @@ def cage_memory_entropy(dt: float, C_scalar: np.ndarray,
                         taper: str = "none",
                         Wg_override: float | None = None,
                         label: str | None = None,
-                        cage_out: list | None = None) -> float | None:
+                        cage_out: list | None = None,
+                        ws_form: str = "quantum"):
     """Cross-family **cage-memory entropy correction** ΔS [k_B per atom].
+
+    ``ws_form`` selects the harmonic weight W_s subtracted in the reweighting
+    (W_g - W_s): ``"quantum"`` (default) uses u/(e^u-1) - ln(1-e^{-u}), the weight
+    the rigorous-HS baseline assigns to the solid band, so the correction replaces
+    exactly what the quantum entropy counted; ``"classical"`` uses 1 - ln u, the
+    matching choice for the classical entropy; ``"both"`` returns the tuple
+    (dS_quantum, dS_classical) from a single kernel inversion.  Releases up to
+    3pt-v1 / 1.0.1 used the classical weight for every entropy.
 
     A parameter-free post-correction to the rigorous-HS 2PT entropy that
     recovers the systematic solid-side deficit of rigorous-HS in structured
@@ -1759,7 +1768,10 @@ def cage_memory_entropy(dt: float, C_scalar: np.ndarray,
 
     hc_k = 100.0 * H * VLIGHT / KB                # hc/k_B [cm·K] ≈ 1.43877
     u = np.where(nu > 0, hc_k * nu / T_K, 1e-9)
-    Ws = np.where(nu > 0, 1.0 - np.log(u), 0.0)
+    if ws_form not in ("quantum", "classical", "both"):
+        raise ValueError(f"ws_form must be quantum|classical|both (got {ws_form!r})")
+    Ws_cl = np.where(nu > 0, 1.0 - np.log(u), 0.0)
+    Ws_q = np.where(nu > 0, u / np.expm1(u) - np.log1p(-np.exp(-u)), 0.0)
 
     c_cm_ps = VLIGHT * 1e-10                       # speed of light [cm/ps]
     wa = 2.0 * PI * nu * c_cm_ps                   # angular frequency [1/ps]
@@ -1870,7 +1882,10 @@ def cage_memory_entropy(dt: float, C_scalar: np.ndarray,
     # min fluid f≈0.15), so the result is independent of its value there — the
     # gate is a fluid/crystal switch, not a fitted parameter.
     gate = (f * f) / (f * f + gate_f0 * gate_f0)
-    dS = float(p * gate * np.trapezoid(cage * (1.0 - w) * (Wg - Ws), dx=dnu))
+    _env = cage * (1.0 - w)
+    dS_q = float(p * gate * np.trapezoid(_env * (Wg - Ws_q), dx=dnu))
+    dS_cl = float(p * gate * np.trapezoid(_env * (Wg - Ws_cl), dx=dnu))
+    dS = {"quantum": dS_q, "classical": dS_cl, "both": (dS_q, dS_cl)}[ws_form]
     if label and gate < 0.99:
         log.info("cage_memory_entropy(%s): fluidicity gate g(f=%.4f)=%.3f "
                  "(f0=%.3g) → cage suppressed toward the harmonic-crystal limit",

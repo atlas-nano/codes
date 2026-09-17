@@ -78,6 +78,10 @@ def parse_xpt(parser: configparser.ConfigParser, cfg: Config) -> None:
         if "dimension"  in s: cfg.dimension  = int(s["dimension"])
         if "cage_entropy" in s:     cfg.cage_entropy     = s.getboolean("cage_entropy")
         if "cage_entropy_rot" in s: cfg.cage_entropy_rot = s.getboolean("cage_entropy_rot")
+        if "cage_ws" in s:
+            cfg.cage_ws = s["cage_ws"].strip().lower()
+            if cfg.cage_ws not in ("consistent", "legacy"):
+                raise ValueError("[thermodynamics] cage_ws must be consistent|legacy")
         if "cage_nf_run" in s:
             cfg.cage_nf_run = int(s["cage_nf_run"])
             if cfg.cage_nf_run < 1:

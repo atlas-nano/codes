@@ -1778,17 +1778,22 @@ class xPTEngine:
                         ref="markov",
                         nf_run=self.cfg.cage_nf_run, taper=self.cfg.cage_taper,
                         tail_tol=self.cfg.cage_tail_tol,
-                        label=f"grp{gi+1}", cage_out=_cage_arr)
+                        label=f"grp{gi+1}", cage_out=_cage_arr,
+                        ws_form="both")
                     if not dS:
                         continue
+                    dS_q, dS_cl = dS
+                    if self.cfg.cage_ws == "legacy":
+                        dS_q = dS_cl
                     # stash the cage DoS for the .pwr writer (un-normalised, ∫=3N
                     # convention like dos/dos_gas/dos_solid → ×cnt back from per-atom)
                     if _cage_arr:
                         result.dos_cage[gi, TRANS, :nused] = _cage_arr[0] * cnt
                     # dS is per-atom [k_B]; result.S_quantum is extensive (the
                     # .thermo writer divides by the particle count), so scale by cnt.
-                    dS_ext = dS * cnt
-                    A_ex_kJ = -dS_ext * R * T_loc * 1e-3
+                    dSq_ext, dScl_ext = dS_q * cnt, dS_cl * cnt
+                    Aq_kJ = -dSq_ext * R * T_loc * 1e-3
+                    Acl_kJ = -dScl_ext * R * T_loc * 1e-3
                     # translational cage correction; for molecular groups also
                     # propagate to the aggregate TOTAL channel (last vt slot) so
                     # the reported total reflects it.  For monatomic, TRANS is the
@@ -1796,15 +1801,16 @@ class xPTEngine:
                     _TOT = result.S_quantum.shape[1] - 1
                     _chans = (TRANS,) if _TOT == TRANS else (TRANS, _TOT)
                     for _c in _chans:
-                        result.S_quantum[gi, _c]   += dS_ext * R
-                        result.S_classical[gi, _c] += dS_ext * R
-                        result.S_cage[gi, _c]      += dS_ext * R
-                        result.A_quantum[gi, _c]    += A_ex_kJ
-                        result.A_classical[gi, _c]  += A_ex_kJ
-                        result.mu_quantum[gi, _c]   += A_ex_kJ
-                        result.mu_classical[gi, _c] += A_ex_kJ
+                        result.S_quantum[gi, _c]   += dSq_ext * R
+                        result.S_classical[gi, _c] += dScl_ext * R
+                        result.S_cage[gi, _c]      += dSq_ext * R   # reported with S_q
+                        result.A_quantum[gi, _c]    += Aq_kJ
+                        result.A_classical[gi, _c]  += Acl_kJ
+                        result.mu_quantum[gi, _c]   += Aq_kJ
+                        result.mu_classical[gi, _c] += Acl_kJ
                     log.info("Cage-memory entropy group %d: ΔS=%.4g J/mol/K/mol "
-                             "(prefactor=1/%d, d=%d)", gi + 1, dS * R, _d, _d)
+                             "(prefactor=1/%d, d=%d; classical-W_s value %.4g)",
+                             gi + 1, dS_q * R, _d, _d, dS_cl * R)
 
             # ── 9d. Rotational cage-memory entropy post-correction ──────────────
             # Same cage machinery applied to the ROTATIONAL channel of molecular
@@ -1872,26 +1878,31 @@ class xPTEngine:
                         nf_run=self.cfg.cage_nf_run, taper=self.cfg.cage_taper,
                         tail_tol=self.cfg.cage_tail_tol,
                         Wg_override=wsr,
-                        label=f"grp{gi+1}-rot", cage_out=_cage_arr)
+                        label=f"grp{gi+1}-rot", cage_out=_cage_arr,
+                        ws_form="both")
                     if not dS:
                         continue
+                    dS_q, dS_cl = dS
+                    if self.cfg.cage_ws == "legacy":
+                        dS_q = dS_cl
                     if _cage_arr:
                         result.dos_cage[gi, _rot_ch, :nused] = _cage_arr[0] * cnt
-                    dS_ext = dS * cnt
-                    A_ex_kJ = -dS_ext * R * T_loc * 1e-3
+                    dSq_ext, dScl_ext = dS_q * cnt, dS_cl * cnt
+                    Aq_kJ = -dSq_ext * R * T_loc * 1e-3
+                    Acl_kJ = -dScl_ext * R * T_loc * 1e-3
                     _chans = (_rot_ch,) if _TOT == _rot_ch else (_rot_ch, _TOT)
                     for _c in _chans:
-                        result.S_quantum[gi, _c]   += dS_ext * R
-                        result.S_classical[gi, _c] += dS_ext * R
-                        result.S_cage[gi, _c]      += dS_ext * R
-                        result.A_quantum[gi, _c]    += A_ex_kJ
-                        result.A_classical[gi, _c]  += A_ex_kJ
-                        result.mu_quantum[gi, _c]   += A_ex_kJ
-                        result.mu_classical[gi, _c] += A_ex_kJ
+                        result.S_quantum[gi, _c]   += dSq_ext * R
+                        result.S_classical[gi, _c] += dScl_ext * R
+                        result.S_cage[gi, _c]      += dSq_ext * R   # reported with S_q
+                        result.A_quantum[gi, _c]    += Aq_kJ
+                        result.A_classical[gi, _c]  += Acl_kJ
+                        result.mu_quantum[gi, _c]   += Aq_kJ
+                        result.mu_classical[gi, _c] += Acl_kJ
                     log.info("Cage-memory entropy (rot) group %d: "
                              "ΔS_cage^rot=%.4g J/mol/K/mol "
                              "(prefactor=1/%d, d_rot=%d, wsr=%.4f)",
-                             gi + 1, dS * R, d_rot, d_rot, wsr)
+                             gi + 1, dS_q * R, d_rot, d_rot, wsr)
 
 
         result.temperature[:] = vacT
@@ -3239,7 +3250,7 @@ class xPTEngine:
             "mu_quantum_at_ref_p", "mu_classical_at_ref_p",
         ]
         entropy_attrs = [
-            "S_quantum", "S_classical",
+            "S_quantum", "S_classical", "S_cage",
             "Cv_quantum", "Cv_classical",
             "S_quantum_gas", "S_quantum_solid", 
             "S_classical_gas", "S_classical_solid", 
