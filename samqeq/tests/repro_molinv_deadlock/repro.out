@@ -1,0 +1,164 @@
+2026-08-09 03:25:11.575867: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-08-09 03:25:11.572420: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-08-09 03:25:11.590845: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2026-08-09 03:25:11.591888: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1786271111.612404  318525 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1786271111.618316  318525 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1786271111.622698  318526 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1786271111.627741  318526 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+LAMMPS (30 Mar 2026)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+Lattice spacing in x,y,z = 3.1 3.1 3.1
+Created orthogonal box = (0 0 0) to (124 31 31)
+  2 by 1 by 1 MPI processor grid
+Read molecule template h2o:
+# SPC-FQ 3-site water: O(type1) + 2H(type2), all charged via samqeq. SPC geom rOH=1.0 theta=109.47.
+  1 molecules
+  0 fragments
+  0 bodies
+  3 atoms with max type 2
+  0 bonds with max type 0
+  0 angles with max type 0
+  0 dihedrals with max type 0
+  0 impropers with max type 0
+Created 5100 atoms
+  using lattice units in orthogonal box = (0 0 0) to (124 31 31)
+  create_atoms CPU = 0.003 seconds
+Created 3000 atoms
+  using lattice units in orthogonal box = (0 0 0) to (124 31 31)
+  create_atoms CPU = 0.002 seconds
+8100 atoms in group fq
+2851 atoms in group mov
+Setting atom values ...
+  2700 settings made for charge
+Setting atom values ...
+  5400 settings made for charge
+Fix rigid/small setup ...
+  create bodies CPU = 0.001 seconds
+  2700 rigid bodies with 8100 atoms
+  1.0000026 = max distance from body owner to body atom
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+Your simulation uses code contributions which should be cited:
+- fix acks2/reaxff command: https://doi.org/10.1137/18M1224684
+The log file lists these citations in BibTeX format.
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+PPPM initialization ...
+  using 12-bit tables for long-range coulomb
+  G vector (1/distance) = 0.33503675
+  grid = 128 48 48
+  stencil order = 5
+  estimated absolute RMS force accuracy = 1.5973537e-05
+  estimated relative force accuracy = 1.1093007e-06
+  using double precision FFTW3
+  3d grid and FFT values/proc = 214775 147456
+Generated 0 of 1 mixed pair_coeff terms from geometric mixing rule
+samqeq: long-range EWALD (reciprocal-in-matvec) on (alpha=g_ewald=0.3350, swb=10.00); pair MUST be lj/cut/coul/long + kspace pppm/samqeq
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 11
+  ghost atom cutoff = 11
+  binsize = 5.5, bins = 23 6 6
+  5 neighbor lists, perpetual/occasional/extra = 5 0 0
+  (1) pair lj/cut, perpetual, copy from (2)
+      attributes: half, newton on, cut 11
+      pair build: copy
+      stencil: none
+      bin: none
+  (2) pair coul/long, perpetual, half/full from (5)
+      attributes: half, newton on, cut 11
+      pair build: halffull/newton
+      stencil: none
+      bin: none
+  (3) pair coul/shield/intra, perpetual, copy from (1)
+      attributes: half, newton on
+      pair build: copy
+      stencil: none
+      bin: none
+  (4) fix qeq/sam, perpetual, half/full from (5)
+      attributes: half, newton off
+      pair build: halffull/newtoff
+      stencil: none
+      bin: none
+  (5) fix qeq/sam, perpetual
+      attributes: full, newton on
+      pair build: full/bin
+      stencil: full/bin/3d
+      bin: standard
+Setting up Verlet run ...
+  Unit style    : metal
+  Current step  : 0
+  Time step     : 0.001
+samqeq: calibrated grid reciprocal self-term recip_self=0.37744 (raw) = 5.4349 eV/e (subtracted so the QEq diagonal stays = eta)
+samqeq SOLVER-DIAG step 0: CG 12 iters (=12 matvecs), resid/b=8.86e-06
+Per MPI rank memory allocation (min/avg/max) = 85.44 | 102.2 | 118.9 Mbytes
+   Step          Temp          E_pair         E_mol          TotEng         Press     
+         0   505.64422     -13781.309      0             -13428.432      14206.279    
+        25   1582.4027     -20206.076      0             -19101.756      10669.816    
+        50   1459.6755     -21318.905      0             -20300.233      17096.567    
+        75   1460.2177     -22284.606      0             -21265.555      18480.764    
+       100   1502.0707     -22883.16       0             -21834.902      17057.404    
+WARNING: samqeq: build_molinv cache validity diverged across ranks at step 122 (per-rank atom-storage regrow; expected under migration). Recovered by a collective rebuild — before this fix this was a permanent MPI deadlock (src/fix_qeq_sam_lr.cpp:1586)
+       125   1484.5385     -22637.289      0             -21601.266      16264.761    
+       150   1475.9849     -22512.025      0             -21481.971      15606.773    
+       175   1479.4973     -22526.765      0             -21494.26       14695.294    
+samqeq SOLVER-DIAG step 200: CG 14 iters (=14 matvecs), resid/b=5.37e-06
+       200   1459.2647     -22307.782      0             -21289.397      14215.751    
+       225   1432.9233     -21983.325      0             -20983.323      13894.568    
+       250   1445.6269     -22110.586      0             -21101.718      12787.875    
+       275   1428.263      -21972.545      0             -20975.795      12415.646    
+       300   1429.2357     -21987.642      0             -20990.214      11721.101    
+       325   1404.8355     -21907.186      0             -20926.786      11690.446    
+       350   1399.6783     -22053.327      0             -21076.526      11394.94     
+       375   1382.1001     -21928.419      0             -20963.885      11182.78     
+samqeq SOLVER-DIAG step 400: CG 14 iters (=14 matvecs), resid/b=5.14e-06
+       400   1376.9604     -21920.851      0             -20959.904      10688.002    
+       425   1365.5571     -21935.956      0             -20982.967      10448.624    
+       450   1357.399      -21991.965      0             -21044.669      10212.48     
+       475   1350.9683     -22021.714      0             -21078.907      9974.701     
+       500   1349.5115     -22065.737      0             -21123.946      9434.0696    
+       525   1336.6734     -22179.534      0             -21246.702      9762.4918    
+       550   1324.6038     -22121.927      0             -21197.518      9479.1452    
+       575   1321.658      -22192.181      0             -21269.828      9127.1018    
+samqeq SOLVER-DIAG step 600: CG 14 iters (=14 matvecs), resid/b=6.28e-06
+       600   1294.917      -22094.393      0             -21190.702      9449.2521    
+Loop time of 153.894 on 2 procs for 600 steps with 8100 atoms
+
+Performance: 0.337 ns/day, 71.247 hours/ns, 3.899 timesteps/s, 31.580 katom-step/s
+94.2% CPU use with 2 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 12.62      | 17.486     | 22.351     | 116.4 | 11.36
+Bond    | 0.00032429 | 0.00034238 | 0.00036046 |   0.0 |  0.00
+Kspace  | 16.96      | 22.905     | 28.85      | 124.2 | 14.88
+Neigh   | 5.8528     | 8.311      | 10.769     |  85.3 |  5.40
+Comm    | 0.36057    | 0.46115    | 0.56172    |  14.8 |  0.30
+Output  | 0.0026517  | 0.0036545  | 0.0046573  |   1.7 |  0.00
+Modify  | 103.38     | 104.6      | 105.82     |  12.0 | 67.97
+Other   |            | 0.1281     |            |       |  0.08
+
+Nlocal:           4050 ave        5231 max        2869 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Nghost:          12160 ave       13844 max       10476 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Neighs:         934008 ave 1.28056e+06 max      587454 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+FullNghs:  1.86802e+06 ave 2.56068e+06 max 1.17536e+06 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 3736034
+Ave neighs/atom = 461.23877
+Ave special neighs/atom = 0
+Neighbor list builds = 119
+Dangerous builds = 0
+REPRO_COMPLETED
+Total wall time: 0:02:34

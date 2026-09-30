@@ -1,0 +1,218 @@
+LAMMPS (30 Mar 2026)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+# REPRO : build_molinv S4-cache MPI deadlock on per-rank atom->nmax growth.
+#
+# Mechanism under test: reallocate_storage() is triggered by `atom->nmax > nmax`,
+# a PER-RANK condition. deallocate_storage() clears molinv_valid and nulls
+# molinv/mol2c on that rank alone; the earlier build_molinv gate then split ranks
+# between the collective rebuild and the cache-hit path -> mismatched collectives,
+# permanent silent hang.
+#
+# Trigger construction (np2, processors 2 1 1, split at x = Lx/2):
+#   - rank 0 carries a dense SPC-FQ gas block sized so its nlocal+nghost lands
+#     JUST UNDER a multiple of AtomVec DELTA = 16384 (nmax granularity);
+#   - rank 1 carries a molecule stream with vx < 0, rammed into rank 0's domain;
+#   - arrivals push rank 0 past the multiple mid-run WITHOUT changing natoms
+#     (so the natoms term of the gate stays true and only the rank-local terms
+#     diverge). Rank 0 then regrows/reallocates alone at an exchange step.
+#
+# PRE-FIX (binary without ): permanent hang within ~2500 steps, all ranks at
+#   ~100% CPU, thermo output stops. gdb: a subset of ranks in
+#   FixQEqSam::build_molinv -> MPI_Allreduce, the rest past it in the solve.
+# POST-FIX: run completes 2500 steps AND the log contains the one-shot warning
+#   "build_molinv cache validity diverged across ranks" -- the warning is the
+#   proof that the divergence actually occurred (a completed run WITHOUT the
+#   warning means the deck no longer exercises the defect; re-tune vdense).
+#
+# Tuning: vdense sets the dense-block x-extent (lattice units). Aim rank 0
+# nlocal+nghost (log "Nlocal"/"Nghost" max on a `-var nsteps 0` sizing pass)
+# 300-1500 BELOW a 16384 multiple. See run_repro.sh.
+
+variable        nsteps index 2500
+variable        vdense index 16.5
+variable        px     index 2      # set 1 for the serial control (processors must match np)
+
+units           metal
+atom_style      full
+boundary        p p p
+processors      ${px} 1 1
+processors      1 1 1
+lattice         sc 3.1
+Lattice spacing in x,y,z = 3.1 3.1 3.1
+region          box block 0 40 0 10 0 10
+create_box      2 box
+Created orthogonal box = (0 0 0) to (124 31 31)
+  1 by 1 by 1 MPI processor grid
+mass            1 15.9994
+mass            2 1.008
+molecule        h2o spcfq.mol
+Read molecule template h2o:
+# SPC-FQ 3-site water: O(type1) + 2H(type2), all charged via samqeq. SPC geom rOH=1.0 theta=109.47.
+  1 molecules
+  0 fragments
+  0 bodies
+  3 atoms with max type 2
+  0 bonds with max type 0
+  0 angles with max type 0
+  0 dihedrals with max type 0
+  0 impropers with max type 0
+
+region          dense  block 0 ${vdense} 0 10 0 10   # rank-0 payload (tunable)
+region          dense  block 0 16.5 0 10 0 10   
+region          movers block 23 32.5 0 10 0 10       # rank-1 stream
+create_atoms    0 region dense mol h2o 12345
+Created 5100 atoms
+  using lattice units in orthogonal box = (0 0 0) to (124 31 31)
+  create_atoms CPU = 0.015 seconds
+create_atoms    0 region movers mol h2o 67890
+Created 3000 atoms
+  using lattice units in orthogonal box = (0 0 0) to (124 31 31)
+  create_atoms CPU = 0.001 seconds
+
+group           fq type 1 2
+8100 atoms in group fq
+group           mov region movers
+2854 atoms in group mov
+set             type 1 charge -0.85
+Setting atom values ...
+  2700 settings made for charge
+set             type 2 charge  0.425
+Setting atom values ...
+  5400 settings made for charge
+velocity        mov set -20.0 0.0 0.0 units box      # 20 A/ps into rank 0
+
+pair_style      hybrid/overlay lj/cut 10.0 coul/long 10.0 coul/shield/intra 5.0
+pair_coeff      1 1 lj/cut 0.01275 3.176
+pair_coeff      1 2 lj/cut 0.0 1.0
+pair_coeff      2 2 lj/cut 0.0 1.0
+pair_coeff      * * coul/long
+pair_coeff      * * coul/shield/intra 1.11
+kspace_style    pppm/samqeq 1.0e-6
+neighbor        1.0 bin
+
+fix             chg fq qeq/sam 2 0.0 10.0 1.0e-5 spcfq_expt.param
+fix             rig all rigid/small molecule         # keep the unbonded 3-site waters intact
+Fix rigid/small setup ...
+  create bodies CPU = 0.002 seconds
+  2700 rigid bodies with 8100 atoms
+  1.0000026 = max distance from body owner to body atom
+
+timestep        0.001
+thermo          25
+run             ${nsteps}
+run             300
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+Your simulation uses code contributions which should be cited:
+
+- fix acks2/reaxff command: https://doi.org/10.1137/18M1224684
+
+@Article{O'Hearn2020,
+ author = {K. A. {O'Hearn} and A. Alperen and H. M. Aktulga},
+ title = {Fast Solvers for Charge Distribution Models on Shared Memory Platforms},
+ journal = {SIAM J.\ Sci.\ Comput.},
+ year =    2020,
+ volume =  42,
+ number =  1,
+ pages =   {1--22}
+}
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+PPPM initialization ...
+  using 12-bit tables for long-range coulomb
+  G vector (1/distance) = 0.33503675
+  grid = 128 48 48
+  stencil order = 5
+  estimated absolute RMS force accuracy = 1.5973537e-05
+  estimated relative force accuracy = 1.1093007e-06
+  using double precision FFTW3
+  3d grid and FFT values/proc = 408375 294912
+Generated 0 of 1 mixed pair_coeff terms from geometric mixing rule
+samqeq: long-range EWALD (reciprocal-in-matvec) on (alpha=g_ewald=0.3350, swb=10.00); pair MUST be lj/cut/coul/long + kspace pppm/samqeq
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 11
+  ghost atom cutoff = 11
+  binsize = 5.5, bins = 23 6 6
+  5 neighbor lists, perpetual/occasional/extra = 5 0 0
+  (1) pair lj/cut, perpetual, copy from (2)
+      attributes: half, newton on, cut 11
+      pair build: copy
+      stencil: none
+      bin: none
+  (2) pair coul/long, perpetual, half/full from (5)
+      attributes: half, newton on, cut 11
+      pair build: halffull/newton
+      stencil: none
+      bin: none
+  (3) pair coul/shield/intra, perpetual, copy from (1)
+      attributes: half, newton on
+      pair build: copy
+      stencil: none
+      bin: none
+  (4) fix qeq/sam, perpetual, half/full from (5)
+      attributes: half, newton off
+      pair build: halffull/newtoff
+      stencil: none
+      bin: none
+  (5) fix qeq/sam, perpetual
+      attributes: full, newton on
+      pair build: full/bin
+      stencil: full/bin/3d
+      bin: standard
+samqeq: calibrated grid reciprocal self-term recip_self=0.37744 (raw) = 5.4349 eV/e (subtracted so the QEq diagonal stays = eta)
+samqeq SOLVER-DIAG step 0: CG 12 iters (=12 matvecs), resid/b=8.09e-06
+Per MPI rank memory allocation (min/avg/max) = 198.7 | 198.7 | 198.7 Mbytes
+   Step          Temp          E_pair         E_mol          TotEng         Press     
+         0   506.8991      -13614.221      0             -13260.469      14894.569    
+        25   1594.5189     -20108.542      0             -18995.766      10840.857    
+        50   1474.004      -21312.587      0             -20283.916      17377.467    
+        75   1483.0723     -22398.217      0             -21363.217      18688.745    
+       100   1519.1698     -22825.037      0             -21764.845      17219.945    
+       125   1485.1566     -22486.925      0             -21450.47       16779.393    
+       150   1484.5754     -22480.007      0             -21443.958      16005.694    
+       175   1485.8677     -22461.299      0             -21424.348      15149.668    
+samqeq SOLVER-DIAG step 200: CG 14 iters (=14 matvecs), resid/b=5.43e-06
+       200   1467.5038     -22216.288      0             -21192.153      14433.317    
+       225   1458.6446     -22049.887      0             -21031.934      13934.573    
+       250   1439.8911     -21991.465      0             -20986.6        13562.167    
+       275   1439.49       -21973.993      0             -20969.408      12812.737    
+       300   1429.5033     -21996.533      0             -20998.917      12310.535    
+Loop time of 126.994 on 1 procs for 300 steps with 8100 atoms
+
+Performance: 0.204 ns/day, 117.587 hours/ns, 2.362 timesteps/s, 19.135 katom-step/s
+91.3% CPU use with 1 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 19.002     | 19.002     | 19.002     |   0.0 | 14.96
+Bond    | 0.0001992  | 0.0001992  | 0.0001992  |   0.0 |  0.00
+Kspace  | 13.864     | 13.864     | 13.864     |   0.0 | 10.92
+Neigh   | 9.2647     | 9.2647     | 9.2647     |   0.0 |  7.30
+Comm    | 0.067247   | 0.067247   | 0.067247   |   0.0 |  0.05
+Output  | 0.0025801  | 0.0025801  | 0.0025801  |   0.0 |  0.00
+Modify  | 84.751     | 84.751     | 84.751     |   0.0 | 66.74
+Other   |            | 0.04251    |            |       |  0.03
+
+Nlocal:           8100 ave        8100 max        8100 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:          19078 ave       19078 max       19078 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:    1.96146e+06 ave 1.96146e+06 max 1.96146e+06 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+FullNghs:  3.92293e+06 ave 3.92293e+06 max 3.92293e+06 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 3922928
+Ave neighs/atom = 484.3121
+Ave special neighs/atom = 0
+Neighbor list builds = 61
+Dangerous builds = 0
+print           "REPRO_COMPLETED"
+REPRO_COMPLETED
+Total wall time: 0:02:09

@@ -1,0 +1,74 @@
+# adjudication deck = the repro kit deck (tests/repro_molinv_deadlock/in.lammps, physics
+# lines verbatim) with three additions that the kit deck lacks:
+#   1. mode gen : write the np1-built configuration (write_data) and quit; mode run with cfg=<file>
+#      read_data's that SAME configuration at every rank count. Needed because `create_atoms ... mol`
+#      seeds molecule orientations with seed+comm->me and numbers atoms rank by rank, so the kit deck's
+#      configuration itself depends on np and a per-atom np-N vs np-1 charge comparison is meaningless.
+#   2. processors ${px} ${py} ${pz} and a y,z extent knob ${vyz}: with 2 2 1 / 2 2 2 the x split stays at
+#      Lx/2 (the kit's np2 geometry) and the dense/stream payload is shared by symmetric y(,z) halves, so
+#      the log's Nlocal/Nghost max is the dense-rank total and vyz retunes it to sit just under a 16384
+#      multiple at np4/np8 (the kit is tuned for np2 only).
+#   3. charge dumps at step 0 (after `run 0`) and at the end, and a PE thermo column, for the comparison.
+# Trigger mechanism and PRE/POST-fix signatures: see the kit deck header and README.
+
+variable        nsteps index 600
+variable        vdense index 16.5
+variable        vyz    index 10
+variable        px     index 2
+variable        py     index 1
+variable        pz     index 1
+variable        mode   index run          # gen => write_data ${cfg} and quit
+variable        usecfg index 0            # 1 => read_data ${cfg} instead of create_atoms (numeric flag: the if
+                                          #      parser cannot compare a file name containing . or /)
+variable        cfg    index none
+
+units           metal
+atom_style      full
+boundary        p p p
+processors      ${px} ${py} ${pz}
+lattice         sc 3.1
+region          box block 0 40 0 ${vyz} 0 ${vyz}
+molecule        h2o spcfq.mol
+region          dense  block 0 ${vdense} 0 ${vyz} 0 ${vyz}   # rank-0 payload (tunable)
+region          movers block 23 32.5 0 ${vyz} 0 ${vyz}       # rank-1 stream
+if "${usecfg} == 0" then &
+  "create_box      2 box" &
+  "mass            1 15.9994" &
+  "mass            2 1.008" &
+  "create_atoms    0 region dense mol h2o 12345" &
+  "create_atoms    0 region movers mol h2o 67890" &
+else &
+  "read_data       ${cfg}"
+group           fq type 1 2
+group           mov region movers
+set             type 1 charge -0.85
+set             type 2 charge  0.425
+velocity        mov set -20.0 0.0 0.0 units box      # 20 A/ps into rank 0
+pair_style      hybrid/overlay lj/cut 10.0 coul/long 10.0 coul/shield/intra 5.0 all
+pair_coeff      1 1 lj/cut 0.01275 3.176
+pair_coeff      1 2 lj/cut 0.0 1.0
+pair_coeff      2 2 lj/cut 0.0 1.0
+pair_coeff      * * coul/long
+pair_coeff      * * coul/shield/intra 1.11
+kspace_style    pppm/samqeq 1.0e-6
+neighbor        1.0 bin
+# : randomly oriented waters on a 3.1 A lattice can put two H's < 1 A apart; such a pair launches its rigid
+# bodies > 11 A in a few fs and rigid/small aborts ("Rigid body atoms ... missing"). The kit's np2 seeds happen
+# to survive; other seeds/extents do not. Drop the overlapping molecules from a freshly created configuration.
+neigh_modify    exclude molecule/intra all   # the overlap test must see INTERmolecular pairs only (O-H is 1.0 A)
+if "${usecfg} == 0" then "delete_atoms    overlap 1.5 all all mol yes"
+neigh_modify    exclude none
+if "${mode} == gen" then "write_data ${cfgout} nocoeff" "quit"
+
+fix             chg fq qeq/sam 2 0.0 10.0 1.0e-5 spcfq_expt.param
+fix             rig all rigid/small molecule         # keep the unbonded 3-site waters intact
+
+timestep        0.001
+thermo_style    custom step temp pe etotal press
+thermo_modify   format float %20.12g
+thermo          25
+run             0
+write_dump      all custom charges0.dump id type x y z q modify sort id format line "%d %d %.6f %.6f %.6f %.12g"
+run             ${nsteps}
+write_dump      all custom charges_end.dump id type x y z q modify sort id format line "%d %d %.6f %.6f %.6f %.12g"
+print           "REPRO_COMPLETED"

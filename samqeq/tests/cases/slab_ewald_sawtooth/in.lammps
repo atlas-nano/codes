@@ -1,0 +1,45 @@
+# Periodic SAWTOOTH field through full Ewald on a z-PERIODIC cell -- the path opened by narrowing
+# the samQEq periodic-direction efield guard (fix_qeq_base_sam.cpp, 2026-08-22). A constant
+# E_z along a periodic axis is still refused (ill-defined: -E.z is not periodic). An ATOM-STYLE
+# potential is a function of the WRAPPED coordinate and therefore periodic by construction; the
+# user supplies the sawtooth, exactly as VASP's EFIELD/LDIPOL does it. This case pins that path:
+# if a future change re-tightens the guard the deck errors; if it perturbs the coupling the
+# charges move. Same water slab as slab_ewald3dc; box 12.4 A in z, slab in the lower ~9 A.
+units           metal
+atom_style      full
+boundary        p p p
+lattice         sc 3.1
+region          box block 0 4 0 4 0 4
+create_box      2 box
+region          slabr block 0 4 0 4 0.6 3.4
+mass            1 15.9994
+mass            2 1.008
+molecule        h2o spcfq.mol
+create_atoms    0 region slabr mol h2o 12345
+group           fq type 1 2
+set             type 1 charge -0.85
+set             type 2 charge  0.425
+pair_style      hybrid/overlay lj/cut 10.0 coul/long 10.0 coul/shield/intra 5.0 all
+pair_coeff      1 1 lj/cut 0.01275 3.176
+pair_coeff      1 2 lj/cut 0.0 1.0
+pair_coeff      2 2 lj/cut 0.0 1.0
+pair_coeff      * * coul/long
+pair_coeff      * * coul/shield/intra 1.11
+kspace_style    pppm/samqeq 1.0e-6
+neighbor        2.0 bin
+# sawtooth: phi = -E (z - zc) across the slab (z < zlo), closed by a ramp in the vacuum window
+# [zlo, zhi]; phi(0) == phi(Lz) so it is single-valued on the periodic cell. E = 0.05 V/A.
+variable        E    equal 0.05
+variable        Lz   equal 12.4
+variable        zc   equal 6.2
+variable        zlo  equal 10.8
+variable        zhi  equal 12.2
+variable        phi  atom "(z<v_zlo)*(-v_E*(z-v_zc)) + (z>=v_zlo)*(z<=v_zhi)*(-v_E*(v_zlo-v_zc) + v_E*(v_zlo-v_zc)*(z-v_zlo)/(v_zhi-v_zlo)*2.0) + (z>v_zhi)*(-v_E*(z-v_Lz-v_zc))"
+variable        ezv  atom v_E
+variable        zer  atom 0.0
+fix             ef  all efield v_zer v_zer v_ezv potential v_phi
+fix             chg fq qeq/sam 1 0.0 10.0 1.0e-5 spcfq_expt.param
+run             0
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"
+variable        peval equal pe
+print           "${peval}" file pe.txt screen no

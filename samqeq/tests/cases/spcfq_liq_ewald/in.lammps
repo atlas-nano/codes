@@ -1,0 +1,30 @@
+# Bit-correctness / #5 regression: small periodic SPC-FQ liquid solved with the
+# self-contained long-range path (kspace_style pppm/samqeq, lr_ewald=2 fully
+# shielded). This is the test that pins PPPMSamqeq::compute_vector — if the
+# reciprocal per-atom potential changes, the solved charges move and this fails.
+units           metal
+atom_style      full
+boundary        p p p
+lattice         sc 3.1
+region          box block 0 4 0 4 0 4
+create_box      2 box
+mass            1 15.9994
+mass            2 1.008
+molecule        h2o spcfq.mol
+create_atoms    0 box mol h2o 12345
+group           fq type 1 2
+set             type 1 charge -0.85
+set             type 2 charge  0.425
+pair_style      hybrid/overlay lj/cut 10.0 coul/long 10.0 coul/shield/intra 5.0 all
+pair_coeff      1 1 lj/cut 0.01275 3.176
+pair_coeff      1 2 lj/cut 0.0 1.0
+pair_coeff      2 2 lj/cut 0.0 1.0
+pair_coeff      * * coul/long
+pair_coeff      * * coul/shield/intra 1.11
+kspace_style    pppm/samqeq 1.0e-6
+neighbor        2.0 bin
+fix             chg fq qeq/sam 1 0.0 10.0 1.0e-5 spcfq_expt.param
+run             0
+variable        peval equal pe
+print           "${peval}" file pe.txt screen no
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"

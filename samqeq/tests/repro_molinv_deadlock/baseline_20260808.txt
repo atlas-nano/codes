@@ -1,0 +1,6 @@
+== sizing pass (run 0, np2) ==
+rank-0 peak nlocal+nghost ~= 15606; next nmax multiple = 16384; headroom = 778
+== repro run (np2, timeout 2400s) ==
+FAIL (defect reproduced, abort form): mismatched MPI_Allreduce (MPI_ERR_TRUNCATE).
+  last thermo line:
+      5400 settings made for charge

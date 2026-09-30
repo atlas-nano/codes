@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# samQEq pre-commit hook — run the bit-correctness suite and block the commit if it
+# regresses. Lives under  (gitignored, local-only since ); install with:
+#
+#     git config core.hooksPath tests/hooks
+#
+# Notes:
+#  - Runs only when this commit touches src/ or tests/ (skips otherwise).
+#  - The suite needs a BUILT LAMMPS binary (LMP env var, or the default path); if it
+#    isn't found the hook skips rather than block a commit you can't test.
+#  - It tests the CURRENTLY-BUILT binary, so rebuild after editing src/SAMQEQ before
+#    relying on it. Bypass any time with:  git commit --no-verify
+set -u
+
+ROOT="$(git rev-parse --show-toplevel)"
+LMP="${LMP:-$HOME/codes/lammps/lammps-dev2/build/lmp_parallel}"
+
+# only run if SAMQEQ sources or the tests are part of this commit (: the tests were not actually checked before, so a
+# test-only commit -- a new case or a re-baselined golden -- went in unverified)
+if git diff --cached --quiet -- src/SAMQEQ tests; then
+  exit 0
+fi
+
+if [ ! -x "$LMP" ]; then
+  echo "samQEq pre-commit: LAMMPS binary not found ($LMP) — skipping bit-tests." >&2
+  echo "  (set LMP=/path/to/lmp, or 'git commit --no-verify' to skip)" >&2
+  exit 0
+fi
+
+echo "samQEq pre-commit: running bit-correctness suite (LMP=$LMP) ..." >&2
+log="$(mktemp)"
+if LMP="$LMP" "$ROOT/tests/run_tests.sh" >"$log" 2>&1; then
+  grep -E "passed=" "$log" >&2
+  echo "samQEq pre-commit: all bit-tests pass." >&2
+  rm -f "$log"
+  # : the refusal probes (a deck that must be REFUSED at init, plus its runnable control); ~2 s
+  rlog="$(mktemp)"
+  if LMP="$LMP" "$ROOT/tests/refusals.sh" >"$rlog" 2>&1; then
+    grep -E "refusals passed=" "$rlog" >&2
+    rm -f "$rlog"
+    exit 0
+  fi
+  echo "samQEq pre-commit: REFUSAL TESTS FAILED — commit blocked." >&2
+  grep -E "FAIL|refusals passed=" "$rlog" >&2
+  echo "  full log: $rlog    (rebuilt the binary? bypass with: git commit --no-verify)" >&2
+  exit 1
+else
+  echo "samQEq pre-commit: BIT-TESTS FAILED — commit blocked." >&2
+  grep -E "FAIL|passed=" "$log" >&2
+  echo "  full log: $log    (rebuilt the binary? bypass with: git commit --no-verify)" >&2
+  exit 1
+fi

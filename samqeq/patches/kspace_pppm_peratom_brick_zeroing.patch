@@ -1,0 +1,24 @@
+diff --git a/src/KSPACE/pppm.cpp b/src/KSPACE/pppm.cpp
+index c829e04117..66eb1f00d5 100644
+--- a/src/KSPACE/pppm.cpp
++++ b/src/KSPACE/pppm.cpp
+@@ -930,6 +930,19 @@ void PPPM::allocate_peratom()
+   memory->create3d_offset(v5_brick,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+                           nxlo_out,nxhi_out,"pppm:v5_brick");
+ 
++  // zero the per-atom bricks: poisson_peratom writes only owned cells and the ghost layer is filled by
++  // forward_comm, but any cell not covered (or read before a full fill, e.g. when compute() is invoked
++  // out of the normal force sequence) would otherwise read uninitialized heap -> garbage per-atom energy.
++  // Zeroing makes such reads a harmless 0. (size = ngrid contiguous cells per brick.)
++  if (differentiation_flag != 1 && u_brick)
++    memset(&u_brick[nzlo_out][nylo_out][nxlo_out], 0, ngrid*sizeof(FFT_SCALAR));
++  memset(&v0_brick[nzlo_out][nylo_out][nxlo_out], 0, ngrid*sizeof(FFT_SCALAR));
++  memset(&v1_brick[nzlo_out][nylo_out][nxlo_out], 0, ngrid*sizeof(FFT_SCALAR));
++  memset(&v2_brick[nzlo_out][nylo_out][nxlo_out], 0, ngrid*sizeof(FFT_SCALAR));
++  memset(&v3_brick[nzlo_out][nylo_out][nxlo_out], 0, ngrid*sizeof(FFT_SCALAR));
++  memset(&v4_brick[nzlo_out][nylo_out][nxlo_out], 0, ngrid*sizeof(FFT_SCALAR));
++  memset(&v5_brick[nzlo_out][nylo_out][nxlo_out], 0, ngrid*sizeof(FFT_SCALAR));
++
+   // use same GC ghost grid object for peratom grid communication
+   // but need to reallocate a larger gc_buf1 and gc_buf2
+ 

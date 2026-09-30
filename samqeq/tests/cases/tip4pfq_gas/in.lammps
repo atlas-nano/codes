@@ -1,0 +1,24 @@
+# Bit-test: TIP4P-FQ 4-site (M-site) single molecule, short-range gated solve.
+# Pins the 4-site augmented-X path (charge on H + massless M, oxygen excluded from
+# the fq group) — the TIP4P-FQ solver that the long-standing blocker lives in.
+units           metal
+atom_style      full
+boundary        f f f
+region          box block -20 20 -20 20 -20 20
+create_box      3 box
+mass            1 15.9994
+mass            2 1.008
+mass            3 1.0e-6
+molecule        h2o water4.mol
+create_atoms    0 single 0.0 0.0 0.0 mol h2o 1
+group           fq type 2 3
+pair_style      lj/cut/coul/cut 12.0
+pair_coeff      1 1 0.0124 3.159
+pair_coeff      2 2 0.0 1.0
+pair_coeff      3 3 0.0 1.0
+neighbor        2.0 bin
+fix             chg fq qeq/sam 1 0.0 12.0 1.0e-9 water4.param
+run             0
+variable        peval equal pe
+print           "${peval}" file pe.txt screen no
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"

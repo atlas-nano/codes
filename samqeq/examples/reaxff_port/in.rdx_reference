@@ -1,0 +1,17 @@
+# RDX (21 atoms, LAMMPS examples/reaxff/RDX), single point: the native ReaxFF charge step
+# (fix qeq/reaxff) at a tight tolerance. Reference for in.rdx_samqeq.
+units           real
+atom_style      charge
+read_data       data.rdx
+pair_style      reaxff control.reax_c.rdx
+pair_coeff      * * ffield.reax C H O N
+neighbor        2.5 bin
+neigh_modify    every 10 delay 0 check no
+fix             chg all qeq/reaxff 1 0.0 10.0 1.0e-10 reaxff maxiter 2000
+compute         reax all pair reaxff
+variable        ereax equal c_reax
+thermo_style    custom step pe v_ereax
+thermo_modify   format float %.10f
+run             0
+print           "ereax ${ereax}" file energies_rdx_reference.txt screen no
+write_dump      all custom charges_rdx_reference.dump id type q fx fy fz modify sort id format line "%d %d %.15g %.12g %.12g %.12g"

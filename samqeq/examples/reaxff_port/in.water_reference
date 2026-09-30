@@ -1,0 +1,18 @@
+# ReaxFF QEq water (3000 atoms, LAMMPS examples/reaxff/water; Achtyl et al. 2015), single point: the native
+# ReaxFF charge step at a tight tolerance. Reference for in.water_samqeq.
+boundary        p p p
+units           real
+atom_style      charge
+read_data       data.water
+pair_style      reaxff NULL safezone 3.0 mincap 150
+pair_coeff      * * qeq_ff.water O H
+neighbor        0.5 bin
+neigh_modify    every 1 delay 0 check yes
+fix             chg all qeq/reaxff 1 0.0 10.0 1.0e-10 reaxff maxiter 2000
+compute         reax all pair reaxff
+variable        ereax equal c_reax
+thermo_style    custom step pe v_ereax
+thermo_modify   format float %.10f
+run             0
+print           "ereax ${ereax}" file energies_water_reference.txt screen no
+write_dump      all custom charges_water_reference.dump id type q fx fy fz modify sort id format line "%d %d %.15g %.12g %.12g %.12g"

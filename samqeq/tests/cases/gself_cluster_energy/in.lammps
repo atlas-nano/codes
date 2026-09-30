@@ -1,0 +1,46 @@
+# gself regression: 7-atom cluster (types 1 = Au-like, 2 = O-like), pppm/samqeq, `gself on width 0.50 types 1`.
+# pe.txt pins the reported pe of two arms:
+#   A  plain gself                  pe carries 1/2 E_self Sum s^2 over type 1 (compute_scalar)
+#   C  gself + quartic on atom 6    the quartic diagonal is seeded from the chemical eta, so E_self enters once
+# charges.dump pins arm C's charges and forces.
+units           metal
+atom_style      full
+boundary        p p p
+read_data       data.lmp
+special_bonds   lj/coul 1.0e-8 1.0e-8 1.0
+pair_style      hybrid/overlay lj/cut 10.0 coul/long 12.0 coul/shield/intra 12.0 all
+pair_coeff      1 1 lj/cut 0.05 2.60
+pair_coeff      1 2 lj/cut 0.05 2.60
+pair_coeff      2 2 lj/cut 0.05 2.80
+pair_coeff      * * coul/long
+pair_coeff      * * coul/shield/intra 0.5
+kspace_style    pppm/samqeq 1.0e-7
+kspace_modify   gewald 0.30
+neighbor        2.0 bin
+group           elec id 1 2 3 4
+group           far2 id 6
+thermo_style    custom step pe
+thermo_modify   format float %22.15g
+
+# ---- A: plain gself
+fix             q all qeq/sam 1 0.0 12.0 1.0e-12 p.param
+fix_modify      q eselfref qs
+fix_modify      q energy yes
+fix_modify      q gself on width 0.50 types 1
+run             0
+variable        peA equal pe
+variable        pa equal ${peA}
+unfix           q
+
+# ---- C: gself + quartic (fresh start charges)
+set             type 1 charge 0.2
+set             type 2 charge -0.5
+fix             q all qeq/sam 1 0.0 12.0 1.0e-12 p.param
+fix_modify      q eselfref qs
+fix_modify      q energy yes
+fix_modify      q gself on width 0.50 types 1
+fix_modify      q quartic far2 1.0e-6
+run             0
+write_dump      all custom charges.dump id type q fx fy fz modify sort id format line "%d %d %.12g %.12g %.12g %.12g"
+variable        peC equal pe
+print           "${pa} ${peC}" file pe.txt screen no

@@ -1,0 +1,16 @@
+# lr_ewald=1 VARIANT (mu-gap fix): INTRA-Slater + BARE-inter = Rick's exact TIP4P-FQ structure
+# (mdtpn.f shields only the fixed intramolecular pairs; all inter pairs bare erfc+recip).
+# samQEq TIP4P-FQ LIQUID param file -- SLATER kernel variant of water4_liquid_gauss.param.
+# Copied from water4_liquid_gauss.param; the ONLY change is the gamma column (4th per-type value),
+# which is REINTERPRETED (via `fix_modify chg shield slater`) as the Slater exponent zeta (1/Angstrom,
+# RAW -- zeta_bohr/0.529177, NOT an energy -> no ev_scale) instead of the pqeq Gaussian core radius Rc.
+# zeta_O (2s, oxygen/M form factor) = 1.63/0.529177 = 3.0803 1/A
+# zeta_H (1s, hydrogen)              = 0.90/0.529177 = 1.7007 1/A
+# Types 1 (O) and 3 (M) both use the OXYGEN 2s Slater form factor (Rick's own convention -- M borrows O's
+# zeta/form-factor even though it sits 0.15 A off the oxygen nucleus; see jrab.py's docstring) -> BOTH are
+# marked 2s via `fix_modify chg shield slater 2s 1 3`. Type 2 (H) stays default 1s.
+# header: gamma_align kappa_bond r_ov r_loc lr_alpha lr_ewald   (unchanged from water4_liquid_gauss.param)
+0.30  10.0  2.0  3.5  0.0  1
+1  0.00  100.00  3.0803  0.0  -7.0  3.0
+2  4.50   15.31  1.7007  0.0  -7.0  3.0
+3  7.47   16.11  3.0803  0.0  -7.0  3.0

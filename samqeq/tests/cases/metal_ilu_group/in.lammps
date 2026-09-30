@@ -1,0 +1,40 @@
+# Bit-correctness: block-ILUT saddle preconditioner with a PARTIAL fix group.
+#
+# This is the case that would have caught the segfault. It is the metal_ilu deck with ONE change
+# -- `fix beq all` -> `fix beq sub`, so the single type-1 molecule atom sits OUTSIDE the qeq group.
+#
+# WHY IT MATTERS: compute_H and compute_X fill H/X firstnbr/numnbrs only for group rows, and
+# allocate_matrix uses memory->create (malloc, not calloc). Before the fix, ilu_build() walked those
+# arrays for EVERY local atom, so a non-group atom sent it into uninitialised heap -- SIGSEGV, or on
+# a lucky heap a silently polluted factor. Every existing ILU deck used group == all, so the whole
+# suite was blind to it; the gated-Drude melt (group = CORES, 1680 shells outside) is what exposed it.
+#
+# Pre-fix this deck segfaults. Post-fix it must produce finite, locked charges.
+units           metal
+atom_style      full
+boundary        f f f
+lattice         sc 1.5
+region          box block -20 20 -20 20 -5 30 units box
+create_box      2 box
+region          slab block -3 3 -3 3 -0.1 0.1 units box
+create_atoms    2 region slab
+create_atoms    1 single 0.0 0.0 2.0 units box
+mass            * 12.0
+group           sub  type 2
+group           mol  type 1
+set             group sub mol 2
+set             group mol mol 1
+set             group all charge 0.0
+pair_style      zero 14.0
+pair_coeff      * *
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check no
+fix             beq sub qeq/sam 1 0.0 14.0 1.0e-10 iface_metal.param
+fix_modify      beq precond ilu
+compute         cq all property/atom q
+compute         qmol mol reduce sum c_cq
+variable        qm equal c_qmol
+run             0
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"
+print           "${qm}" file pe.txt screen no
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"

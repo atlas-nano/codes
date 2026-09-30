@@ -1,0 +1,28 @@
+# EXPECT_OK
+# s88b: the defect itself. kspace_style IS defined, bonds exist, special_bonds lj 0 coul 0: LAMMPS keeps the bonded
+# pairs in every list (neighbor.cpp:550-551, special_flag=2; factor_coul=0 on them), coul/shield/intra applies the
+# full J_shield and coul/long nets 0 for them, so the physics is complete. Today (bb001f8) the guard refuses this
+# deck (FAIL); after the s88b fix it must run and write charges.dump (PASS).
+units           metal
+atom_style      full
+boundary        p p p
+read_data       cfg.data
+mass            1 15.9994
+mass            2 1.008
+special_bonds   lj 0.0 0.0 0.0 coul 0.0 0.0 0.0
+bond_style      harmonic
+bond_coeff      1 22.965 1.012
+angle_style     harmonic
+angle_coeff     1 1.6455 113.24
+group           fq type 1 2
+pair_style      hybrid/overlay lj/cut 6.0 coul/long 6.0 coul/shield/intra 5.0 all
+pair_coeff      1 1 lj/cut 0.01275 3.176
+pair_coeff      1 2 lj/cut 0.0 1.0
+pair_coeff      2 2 lj/cut 0.0 1.0
+pair_coeff      * * coul/long
+pair_coeff      * * coul/shield/intra 1.11
+kspace_style    pppm/samqeq 1.0e-6
+neighbor        1.0 bin
+fix             chg fq qeq/sam 2 0.0 10.0 1.0e-5 spcfq_expt.param
+run             0
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"

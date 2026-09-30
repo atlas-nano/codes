@@ -1,0 +1,23 @@
+# ReaxFF QEq water, the same single point with samQEq supplying the charges (see in.rdx_samqeq).
+boundary        p p p
+units           real
+atom_style      charge
+read_data       data.water
+pair_style      hybrid/overlay reaxff NULL checkqeq no safezone 3.0 mincap 150 coul/long 10.0
+pair_coeff      * * reaxff qeq_ff.water O H
+pair_coeff      * * coul/long
+kspace_style    pppm/samqeq 1.0e-5
+neighbor        0.5 bin
+neigh_modify    every 1 delay 0 check yes
+fix             chg all qeq/sam 1 0.0 10.0 1.0e-10 water.param
+fix_modify      chg cutoff on
+fix_modify      chg energy no           # pair reaxff already carries the charge-equilibration energy
+pair_modify     pair coul/long compute no
+kspace_modify   compute no
+compute         reax all pair reaxff
+variable        ereax equal c_reax
+thermo_style    custom step pe v_ereax
+thermo_modify   format float %.10f
+run             0
+print           "ereax ${ereax}" file energies_water_samqeq.txt screen no
+write_dump      all custom charges_water_samqeq.dump id type q fx fy fz modify sort id format line "%d %d %.15g %.12g %.12g %.12g"

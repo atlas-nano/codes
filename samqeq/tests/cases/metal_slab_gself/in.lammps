@@ -1,0 +1,30 @@
+# Metal slab in a field under full Ewald with the finite-width charge SELF-ENERGY on the diagonal
+# (`fix_modify gself`, 2026-08-23). Pins the term that lets a lattice-QEq metal screen like a
+# conductor: without it this slab carries a staggered Nyquist mode (layer charges alternate at
+# 2.2x the Gauss limit at the physical eta_Au and DIVERGE as eta->0); with it the response is
+# monotone, Gauss to ~6%, and the eta->0 limit is a well-behaved conductor -- the behaviour of
+# Scalfi et al.'s Thomas-Fermi electrode (JCP 153, 174704), whose Gaussian charges carry exactly
+# this term implicitly. eta_Au = 5.172 is the physical TF hardness (l_TF = 0.72 A) and is NOT
+# touched; the width 0.5 A is Scalfi's. PQEq (Gaussian) kernel, as the repo convention prefers.
+# 240-atom orthorhombic Au(111), 5 layers, generated on-lattice (duplicate-free, checked).
+units           metal
+atom_style      full
+boundary        p p f
+read_data       data.au_ortho
+pair_style      hybrid/overlay lj/cut 12.0 coul/long 12.0 coul/shield/intra 12.0 all gaussian
+pair_coeff      * * lj/cut 0.0 1.0
+pair_coeff      * * coul/long
+pair_coeff      * * coul/shield/intra 1.618
+kspace_style    pppm/samqeq 1.0e-6
+kspace_modify   slab 3.0 mesh 24 28 80 gewald 0.35
+neighbor        2.0 bin
+set             atom 1 charge -0.01
+set             atom 240 charge 0.01
+fix             ef  all efield 0.0 0.0 0.5
+fix             chg all qeq/sam 1 0.0 10.0 1.0e-8 au_pqeq.param
+fix_modify      chg shield gaussian
+fix_modify      chg gself on width 0.50
+run             0
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"
+variable        peval equal pe
+print           "${peval}" file pe.txt screen no

@@ -1,0 +1,143 @@
+LAMMPS (2 Sep 2026)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+# ReaxFF QEq water, the same single point with samQEq supplying the charges (see in.rdx_samqeq).
+boundary        p p p
+units           real
+atom_style      charge
+read_data       data.water
+Reading data file ...
+  orthogonal box = (0 0 0) to (31.043046 31.043046 31.043046)
+  1 by 1 by 1 MPI processor grid
+  reading atoms ...
+  3000 atoms
+  read_data CPU = 0.017 seconds
+pair_style      hybrid/overlay reaxff NULL checkqeq no safezone 3.0 mincap 150 coul/long 10.0
+pair_coeff      * * reaxff qeq_ff.water O H
+WARNING: Changed valency_val to valency_boc for X (src/REAXFF/reaxff_ffield.cpp:302)
+pair_coeff      * * coul/long
+kspace_style    pppm/samqeq 1.0e-5
+neighbor        0.5 bin
+neigh_modify    every 1 delay 0 check yes
+fix             chg all qeq/sam 1 0.0 10.0 1.0e-10 water.param
+fix_modify      chg cutoff on
+samqeq: QEq solve long-range = TAPER-CUTOFF at swb (no reciprocal) -- the SOLVE operator is strictly short-ranged (forces unchanged)
+fix_modify      chg energy no           # pair reaxff already carries the charge-equilibration energy
+pair_modify     pair coul/long compute no
+kspace_modify   compute no
+Updated KSpace settings:
+  KSpace computation is turned:    OFF
+  Use MPI collective operations:   OFF
+  Use MPI non-blocking operations: OFF
+  Gewald is determined automatically
+compute         reax all pair reaxff
+variable        ereax equal c_reax
+thermo_style    custom step pe v_ereax
+thermo_modify   format float %.10f
+run             0
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+Your simulation uses code contributions which should be cited:
+
+- pair reaxff command: https://doi.org/10.1016/j.parco.2011.08.005
+
+@Article{Aktulga12,
+ author = {H. M. Aktulga and J. C. Fogarty and S. A. Pandit and A. Y. Grama},
+ title = {Parallel Reactive Molecular Dynamics: {N}umerical Methods and Algorithmic Techniques},
+ journal = {Parallel Computing},
+ year =    2012,
+ volume =  38,
+ number =  {4--5},
+ pages =   {245--259}
+}
+
+- fix acks2/reaxff command: https://doi.org/10.1137/18M1224684
+
+@Article{O'Hearn2020,
+ author = {K. A. {O'Hearn} and A. Alperen and H. M. Aktulga},
+ title = {Fast Solvers for Charge Distribution Models on Shared Memory Platforms},
+ journal = {SIAM J.\ Sci.\ Comput.},
+ year =    2020,
+ volume =  42,
+ number =  1,
+ pages =   {1--22}
+}
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+WARNING: No fixes with time integration, atoms won't move
+For more information see https://docs.lammps.org/err0028 (src/verlet.cpp:60)
+PPPM initialization ...
+  using 12-bit tables for long-range coulomb
+  G vector (1/distance) = 0.29929196
+  grid = 25 25 25
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.0032568473
+  estimated relative force accuracy = 9.8078989e-06
+  using double precision FFTW3
+  3d grid and FFT values/proc = 27000 15625
+WARNING: samqeq: E_self EXCLUDED from pe/etotal (fix_modify chg energy no): thermo pe is NOT the energy the forces integrate; wall targets, dH and dU derived from pe are incomplete by exactly f_chg (src/fix_qeq_sam.cpp:340)
+samqeq: no molecule IDs -> one global fragment (global charge-neutrality constraint)
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 10.5
+  ghost atom cutoff = 10.5
+  binsize = 5.25, bins = 6 6 6
+  4 neighbor lists, perpetual/occasional/extra = 4 0 0
+  (1) pair reaxff, perpetual
+      attributes: half, newton off, ghost
+      pair build: half/bin/ghost/newtoff
+      stencil: full/ghost/bin/3d
+      bin: standard
+  (2) pair coul/long, perpetual, half/full from (4)
+      attributes: half, newton on
+      pair build: halffull/newton
+      stencil: none
+      bin: none
+  (3) fix qeq/sam, perpetual, copy from (1)
+      attributes: half, newton off
+      pair build: copy
+      stencil: none
+      bin: none
+  (4) fix qeq/sam, perpetual
+      attributes: full, newton on
+      pair build: full/bin/atomonly
+      stencil: full/bin/3d
+      bin: standard
+samqeq SOLVER-DIAG step 0: CG 69 iters (=69 matvecs), resid/b=1.94e-11
+Per MPI rank memory allocation (min/avg/max) = 546 | 546 | 546 Mbytes
+   Step         PotEng        v_ereax    
+         0  -257042.9781199448 -257042.9781199448
+Loop time of 1.272e-06 on 1 procs for 0 steps with 3000 atoms
+
+235.8% CPU use with 1 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0          | 0          | 0          |   0.0 |  0.00
+Kspace  | 0          | 0          | 0          |   0.0 |  0.00
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0          | 0          | 0          |   0.0 |  0.00
+Output  | 0          | 0          | 0          |   0.0 |  0.00
+Modify  | 0          | 0          | 0          |   0.0 |  0.00
+Other   |            | 1.272e-06  |            |       |100.00
+
+Nlocal:           3000 ave        3000 max        3000 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:          11069 ave       11069 max       11069 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:         971932 ave      971932 max      971932 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+FullNghs:  1.45531e+06 ave 1.45531e+06 max 1.45531e+06 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 1455314
+Ave neighs/atom = 485.10467
+Neighbor list builds = 0
+Dangerous builds = 0
+print           "ereax ${ereax}" file energies_water_samqeq.txt screen no
+write_dump      all custom charges_water_samqeq.dump id type q fx fy fz modify sort id format line "%d %d %.15g %.12g %.12g %.12g"
+Total wall time: 0:00:00

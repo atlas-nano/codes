@@ -1,0 +1,23 @@
+# EXPECT_OK
+# s88b positive control for in.refuse_shield_nokspace: same no-kspace deck, but the 1-2/1-3 hops carry a tiny nonzero
+# lj weight, so special_flag=2 and the pairs stay in the list (neighbor.cpp:531) -> must run and write charges.dump.
+units           metal
+atom_style      full
+boundary        p p p
+read_data       cfg.data
+mass            1 15.9994
+mass            2 1.008
+special_bonds   lj 1e-300 1e-300 1e-300 coul 0.0 0.0 0.0
+bond_style      harmonic
+bond_coeff      1 22.965 1.012
+angle_style     harmonic
+angle_coeff     1 1.6455 113.24
+pair_style      hybrid/overlay lj/cut 6.0 coul/cut 6.0 coul/shield/intra 5.0 all
+pair_coeff      1 1 lj/cut 0.01275 3.176
+pair_coeff      1 2 lj/cut 0.0 1.0
+pair_coeff      2 2 lj/cut 0.0 1.0
+pair_coeff      * * coul/cut
+pair_coeff      * * coul/shield/intra 1.11
+neighbor        1.0 bin
+run             0
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"

@@ -1,0 +1,33 @@
+# TIP4P-FQ monomer (Rick, Stuart and Berne 1994) with the exact Slater-orbital kernel and the model's own
+# exponents (zeta_O = 1.63, zeta_H = 0.90 bohr^-1, M borrowing the O 2s form factor), nothing refitted.
+# One molecule in a 40 A box with free boundaries, a single charge solve. Expected: mu = 1.8611 D against the
+# published 1.85 D. (The periodic, infinite-dilution value quoted in the paper, 1.8634 D, is from
+# examples/kernel_comparison.)
+units           metal
+atom_style      full
+boundary        f f f
+region          box block -20 20 -20 20 -20 20
+create_box      3 box
+mass            1 15.9994
+mass            2 1.008
+mass            3 1.0e-6
+molecule        h2o water4.mol
+create_atoms    0 single 0.0 0.0 0.0 mol h2o 1
+group           fq type 2 3
+pair_style      lj/cut/coul/cut 12.0
+pair_coeff      1 1 0.0124 3.159
+pair_coeff      2 2 0.0 1.0
+pair_coeff      3 3 0.0 1.0
+neighbor        2.0 bin
+fix             chg fq qeq/sam 1 0.0 12.0 1.0e-9 water4_gas_slater.param
+fix_modify      chg shield slater 2s 1 3
+compute         dip  all dipole/samqeq
+run             0
+variable        peval equal pe
+print           "${peval}" file pe.txt screen no
+variable        qM equal q[4]
+variable        qH1 equal q[2]
+variable        qH2 equal q[3]
+variable        mu equal c_dip
+print           "GAS_SLATER qM=$(v_qM:%.5f) qH1=$(v_qH1:%.5f) qH2=$(v_qH2:%.5f) mu_D=$(v_mu:%.5f) pe_eV=$(v_peval:%.6f)"
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"

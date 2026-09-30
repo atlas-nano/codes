@@ -1,0 +1,57 @@
+# FINAL refit confirmation: SPC-FQ samQEq lr_ewald=2, sigma=3.144 (chosen LJ), eps=0.01275.
+# One run: equilibrate 15 ps, then average rho, etot/mol (ΔHvap), and per-molecule dipole over 15 ps.
+# Writes a restart for the entropy (2PT) run. tol 1e-5 (dipole-accurate).
+units metal
+atom_style full
+boundary p p p
+lattice sc 3.1
+region box block 0 8 0 8 0 8
+create_box 2 box
+mass 1 15.9994
+mass 2 1.008
+molecule h2o spcfq.mol
+create_atoms 0 box mol h2o 12345
+group fq type 1 2
+set type 1 charge -0.85
+set type 2 charge 0.425
+pair_style hybrid/overlay lj/cut 10.0 coul/long 10.0 coul/shield/intra 5.0 all
+pair_coeff 1 1 lj/cut 0.01275 3.144
+pair_coeff 1 2 lj/cut 0.0 1.0
+pair_coeff 2 2 lj/cut 0.0 1.0
+pair_coeff * * coul/long
+pair_coeff * * coul/shield/intra 1.11
+kspace_style pppm/samqeq 1.0e-6
+neighbor 2.0 bin
+velocity all create 298 4928459 mom yes rot yes
+timestep 0.001
+fix chg fq qeq/sam 1 0.0 10.0 1.0e-5 spcfq_expt.param
+# The grid self-term is PINNED. Under constant pressure the cell volume changes, the mesh is
+# re-derived and the probe-pair estimator re-selects its pair, so the subtracted self-term drifts:
+# unpinned, this deck recalibrates 384 times over 30 ps across 0.37573-0.38261 (1.83%). That drift
+# silently re-tunes the model, and since two runs in three abort on the consistency guard.
+# 0.37933 is the value the calibration returns for this system at its production geometry (np 1/2/4/8,
+# identical to five decimals). With it, three seeds give rho 0.9970(8) g/cc and dipole 2.7972(17) D,
+# the Table 5 native column. Do NOT copy this number to another system -- it is geometry-specific.
+fix_modify chg recip_self 0.37933
+fix integ all rigid/npt/small molecule temp 298 298 0.1 iso 1.0 1.0 1.0
+variable nmol equal count(fq)/3
+variable eon atom "(type==1)*(6.7721*q+0.5*15.1145*q*q)+(type==2)*(4.50*q+0.5*16.1595*q*q)"
+compute eonsum all reduce sum v_eon
+group oxy type 1
+compute qoo oxy property/atom q
+compute qOav oxy reduce ave c_qoo
+compute dip fq dipole/samqeq
+variable etotmol equal (pe+c_eonsum)/v_nmol
+variable rho equal density
+thermo 1000
+thermo_style custom step temp press density pe v_etotmol c_dip c_qOav
+# single run (no 2nd run -> no pppm/samqeq re-setup segfault); average over the back half (steps 15k-30k)
+fix avg all ave/time 10 1500 30000 v_rho v_etotmol c_dip c_qOav
+run 30000
+variable rhoF equal f_avg[1]
+variable etF equal f_avg[2]
+variable dipF equal f_avg[3]
+variable qOF equal f_avg[4]
+print "NPTFINAL rho=${rhoF} g/cc etotmol=${etF} eV dipole=${dipF} D qO=${qOF}"
+write_restart spcfq_s3144.restart
+print "NPT_FINAL DONE"

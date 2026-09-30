@@ -1,0 +1,164 @@
+LAMMPS (2 Sep 2026)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+# RDX, the same single point with samQEq supplying the charges: ReaxFF's own charge step is disabled
+# (checkqeq no) and fix qeq/sam solves with ReaxFF's electronegativities, hardnesses and shielding
+# parameters (rdx.param, from make_params.py), the cube-root kernel, the same taper to 10 A and one
+# global neutrality constraint. `cutoff on` selects the taper-cutoff operator with no reciprocal part.
+# coul/long and pppm/samqeq are present only because the long-range route reads g_ewald from the kspace
+# style, and both are switched off (`compute no`); with the fix's own energy excluded, pe and the forces
+# are those of ReaxFF alone. Omitting any of the three leaves the charges right and pe and forces wrong.
+units           real
+atom_style      charge
+read_data       data.rdx
+Reading data file ...
+  orthogonal box = (35 35 35) to (48 48 48)
+  1 by 1 by 1 MPI processor grid
+  reading atoms ...
+  21 atoms
+  read_data CPU = 0.001 seconds
+pair_style      hybrid/overlay reaxff control.reax_c.rdx checkqeq no coul/long 10.0
+WARNING: Ignoring inactive control parameter: simulation_name (src/REAXFF/reaxff_control.cpp:94)
+WARNING: Ignoring inactive control parameter: energy_update_freq (src/REAXFF/reaxff_control.cpp:94)
+WARNING: Support for writing native trajectories has been removed after LAMMPS version 8 April 2021 (src/REAXFF/reaxff_control.cpp:109)
+WARNING: Ignoring inactive control parameter: traj_title (src/REAXFF/reaxff_control.cpp:94)
+WARNING: Ignoring inactive control parameter: atom_info (src/REAXFF/reaxff_control.cpp:94)
+WARNING: Ignoring inactive control parameter: atom_forces (src/REAXFF/reaxff_control.cpp:94)
+WARNING: Ignoring inactive control parameter: atom_velocities (src/REAXFF/reaxff_control.cpp:94)
+WARNING: Ignoring inactive control parameter: bond_info (src/REAXFF/reaxff_control.cpp:94)
+WARNING: Ignoring inactive control parameter: angle_info (src/REAXFF/reaxff_control.cpp:94)
+pair_coeff      * * reaxff ffield.reax C H O N
+Reading potential file ffield.reax with DATE: 2010-02-19
+pair_coeff      * * coul/long
+kspace_style    pppm/samqeq 1.0e-5
+kspace_modify   gewald 0.30
+Updated KSpace settings:
+  KSpace computation is turned:    ON
+  Use MPI collective operations:   OFF
+  Use MPI non-blocking operations: OFF
+  Gewald manually set to:          0.3
+neighbor        2.5 bin
+neigh_modify    every 10 delay 0 check no
+fix             chg all qeq/sam 1 0.0 10.0 1.0e-10 rdx.param
+fix_modify      chg cutoff on
+samqeq: QEq solve long-range = TAPER-CUTOFF at swb (no reciprocal) -- the SOLVE operator is strictly short-ranged (forces unchanged)
+fix_modify      chg energy no           # pair reaxff already carries the charge-equilibration energy
+pair_modify     pair coul/long compute no
+kspace_modify   compute no
+Updated KSpace settings:
+  KSpace computation is turned:    OFF
+  Use MPI collective operations:   OFF
+  Use MPI non-blocking operations: OFF
+  Gewald manually set to:          0.3
+compute         reax all pair reaxff
+variable        ereax equal c_reax
+thermo_style    custom step pe v_ereax
+thermo_modify   format float %.10f
+run             0
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+Your simulation uses code contributions which should be cited:
+
+- pair reaxff command: https://doi.org/10.1016/j.parco.2011.08.005
+
+@Article{Aktulga12,
+ author = {H. M. Aktulga and J. C. Fogarty and S. A. Pandit and A. Y. Grama},
+ title = {Parallel Reactive Molecular Dynamics: {N}umerical Methods and Algorithmic Techniques},
+ journal = {Parallel Computing},
+ year =    2012,
+ volume =  38,
+ number =  {4--5},
+ pages =   {245--259}
+}
+
+- fix acks2/reaxff command: https://doi.org/10.1137/18M1224684
+
+@Article{O'Hearn2020,
+ author = {K. A. {O'Hearn} and A. Alperen and H. M. Aktulga},
+ title = {Fast Solvers for Charge Distribution Models on Shared Memory Platforms},
+ journal = {SIAM J.\ Sci.\ Comput.},
+ year =    2020,
+ volume =  42,
+ number =  1,
+ pages =   {1--22}
+}
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+WARNING: No fixes with time integration, atoms won't move
+For more information see https://docs.lammps.org/err0028 (src/verlet.cpp:60)
+PPPM initialization ...
+WARNING: Using kspace solver on system with no charge (src/kspace.cpp:317)
+  using 12-bit tables for long-range coulomb
+  G vector (1/distance) = 0.3
+  grid = 4 4 4
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0
+  estimated relative force accuracy = 0
+  using double precision FFTW3
+  3d grid and FFT values/proc = 729 64
+WARNING: samqeq: E_self EXCLUDED from pe/etotal (fix_modify chg energy no): thermo pe is NOT the energy the forces integrate; wall targets, dH and dU derived from pe are incomplete by exactly f_chg (src/fix_qeq_sam.cpp:340)
+samqeq: no molecule IDs -> one global fragment (global charge-neutrality constraint)
+Neighbor list info ...
+  update: every = 10 steps, delay = 0 steps, check = no
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 12.5
+  ghost atom cutoff = 12.5
+  binsize = 6.25, bins = 3 3 3
+  4 neighbor lists, perpetual/occasional/extra = 4 0 0
+  (1) pair reaxff, perpetual
+      attributes: half, newton off, ghost
+      pair build: half/bin/ghost/newtoff
+      stencil: full/ghost/bin/3d
+      bin: standard
+  (2) pair coul/long, perpetual, half/full from (4)
+      attributes: half, newton on
+      pair build: halffull/newton
+      stencil: none
+      bin: none
+  (3) fix qeq/sam, perpetual, copy from (1)
+      attributes: half, newton off
+      pair build: copy
+      stencil: none
+      bin: none
+  (4) fix qeq/sam, perpetual
+      attributes: full, newton on
+      pair build: full/bin/atomonly
+      stencil: full/bin/3d
+      bin: standard
+samqeq SOLVER-DIAG step 0: CG 19 iters (=19 matvecs), resid/b=4.87e-12
+Per MPI rank memory allocation (min/avg/max) = 16.6 | 16.6 | 16.6 Mbytes
+   Step         PotEng        v_ereax    
+         0  -1884.3080826952 -1884.3080826952
+Loop time of 1.041e-06 on 1 procs for 0 steps with 21 atoms
+
+96.1% CPU use with 1 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0          | 0          | 0          |   0.0 |  0.00
+Kspace  | 0          | 0          | 0          |   0.0 |  0.00
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0          | 0          | 0          |   0.0 |  0.00
+Output  | 0          | 0          | 0          |   0.0 |  0.00
+Modify  | 0          | 0          | 0          |   0.0 |  0.00
+Other   |            | 1.041e-06  |            |       |100.00
+
+Nlocal:             21 ave          21 max          21 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:            546 ave         546 max         546 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:           1106 ave        1106 max        1106 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+FullNghs:         1316 ave        1316 max        1316 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 1316
+Ave neighs/atom = 62.666667
+Neighbor list builds = 0
+Dangerous builds not checked
+print           "ereax ${ereax}" file energies_rdx_samqeq.txt screen no
+write_dump      all custom charges_rdx_samqeq.dump id type q fx fy fz modify sort id format line "%d %d %.15g %.12g %.12g %.12g"
+Total wall time: 0:00:00

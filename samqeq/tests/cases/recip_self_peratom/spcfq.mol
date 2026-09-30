@@ -1,0 +1,15 @@
+# SPC-FQ 3-site water: O(type1) + 2H(type2), all charged via samqeq. SPC geom rOH=1.0 theta=109.47.
+
+3 atoms
+
+Coords
+
+1   0.00000  0.00000  0.00000
+2   0.81650  0.57735  0.00000
+3  -0.81650  0.57735  0.00000
+
+Types
+
+1  1
+2  2
+3  2

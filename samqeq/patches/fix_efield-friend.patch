@@ -1,0 +1,26 @@
+From: samQEq package
+Subject: [PATCH] fix_efield: befriend FixQEqBaseSam (samQEq ACKS2/QEq base)
+
+The samQEq solver base (src/SAMQEQ/fix_qeq_base_sam) reads FixEfield's per-atom
+external field to add it to the electronegativity, exactly as the upstream
+qeq/reaxff family does (FixQEqReaxFF / FixQtpieReaxFF are already friends). This
+one-line core change grants the same friend access to FixQEqBaseSam.
+
+fix_efield is a CORE LAMMPS fix (src/fix_efield.h, always built), so this is a
+core-to-core change and introduces no package dependency. Apply from the LAMMPS
+src/ directory:
+
+    cd lammps/src
+    patch -p1 < /path/to/samQEq/patches/fix_efield-friend.patch
+    #   or:  git apply /path/to/samQEq/patches/fix_efield-friend.patch
+
+--- a/src/fix_efield.h
++++ b/src/fix_efield.h
+@@ -26,6 +26,7 @@ namespace LAMMPS_NS {
+ class FixEfield : public Fix {
+   friend class FixQEqReaxFF;
+   friend class FixQEqRelReaxFF;
+   friend class FixQtpieReaxFF;
++  friend class FixQEqBaseSam;    // SAMQEQ: same efield coupling as the qeq/reaxff family
+
+  public:

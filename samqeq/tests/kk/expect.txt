@@ -1,0 +1,23 @@
+# <case> PASS <rtol> | REFUSED <error-substring> | XFAIL <why>
+aspc_corrector PASS 1e-9
+bondsoft_gas PASS 1e-9
+ionfield_cl_water PASS 1e-9
+metal_ilu_group PASS 1e-9
+shield_special00 PASS 1e-9
+slab_ewald_sawtooth PASS 1e-9
+spcfq_gas_dsf PASS 1e-9
+spcfq_gas_ewald PASS 1e-9
+spcfq_liq_ewald PASS 1e-9
+spcfq_xl PASS 1e-9
+spcfq_xl_staircase PASS 1e-9
+tip4pfq_gas PASS 1e-9
+slater_gas_kernel PASS 1e-9
+gself_cluster_energy PASS 1e-9
+recalib_on_grid_change PASS 1e-9
+second_run_molinv PASS 1e-9
+charge_solid_global REFUSED molecule-free (atom_style charge) systems are host-only
+metal_slab_gself REFUSED does not support kspace_modify slab
+slab_ewald3dc REFUSED does not support kspace_modify slab
+recip_self_peratom REFUSED recip_self peratom is not supported by fix qeq/sam/kk
+conductor_water_qeq REFUSED does not support kspace_modify slab
+conductor_water_samqeq REFUSED does not support kspace_modify slab

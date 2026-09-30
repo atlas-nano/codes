@@ -1,0 +1,2 @@
+rdx: N = 21 max|dq| = 5.46e-10 e max|dF| = 2.00e-08 kcal/mol/A |dE_reaxff| = 1.00e-11 kcal/mol
+water: N = 3000 max|dq| = 1.19e-09 e max|dF| = 7.27e-08 kcal/mol/A |dE_reaxff| = 8.00e-09 kcal/mol

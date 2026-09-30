@@ -1,0 +1,39 @@
+# Au(111) slab (240 atoms) carrying 81 TIP4P-FQ water molecules, one charge solve. Conventional QEq: one
+# global neutrality constraint and no self-energy, at the Thomas-Fermi gold hardness of 5.172 eV, where the
+# operator is still definite. Charge moves between the water and the metal and between molecules; below a
+# gold hardness of about 3.5 eV this operator is indefinite.
+units           metal
+atom_style      full
+boundary        p p f
+read_data       data.lmp
+group           au   type 1
+group           watO type 2
+group           fq   type 1 3 4
+
+pair_style      hybrid/overlay lj/cut 12.0 coul/long 12.0 coul/shield/intra 12.0 all gaussian
+pair_coeff      * * lj/cut 0.0 1.0
+pair_coeff      2 2 lj/cut 0.012412 3.159
+pair_coeff      * * coul/long
+pair_coeff      1 1 coul/shield/intra 1.618000
+pair_coeff      1 2 coul/shield/intra 0.714283
+pair_coeff      1 3 coul/shield/intra 0.808855
+pair_coeff      1 4 coul/shield/intra 0.714283
+pair_coeff      2 2 coul/shield/intra 0.315328
+pair_coeff      2 3 coul/shield/intra 0.357078
+pair_coeff      2 4 coul/shield/intra 0.315328
+pair_coeff      3 3 coul/shield/intra 0.404355
+pair_coeff      3 4 coul/shield/intra 0.357078
+pair_coeff      4 4 coul/shield/intra 0.315328
+special_bonds   lj/coul 1.0e-8 1.0e-8 1.0
+kspace_style    pppm/samqeq 1.0e-6
+kspace_modify   slab 3.0 mesh 24 28 80 gewald 0.35
+neighbor        2.0 bin
+set             group all mol 1   # one global neutrality constraint
+fix             chg fq qeq/sam 1 0.0 10.0 1.0e-8 param
+fix_modify      chg shield gaussian
+fix_modify      chg energy yes
+
+run             0
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"
+variable        peval equal pe
+print           "${peval}" file pe.txt screen no
