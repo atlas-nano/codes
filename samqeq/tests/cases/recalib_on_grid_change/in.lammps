@@ -1,16 +1,13 @@
-# REGRESSION: signature-gated recip_self recalibration (PPPM "Out of range" on a 2nd-run re-setup).
+# Signature-gated recip_self recalibration across a second run's re-setup.
 #
-# Bug: FixQEqSam::init() used to blanket-reset lr_calibrated=0 EVERY run, forcing a recip_self
-# recalibration (compute_vector -> PPPM particle_map) inside setup_pre_force -- which runs BEFORE
-# kspace->setup() (verlet.cpp). On an in-memory 2nd run after a fix/dt change, that ran the fragile
-# grid op on a not-yet-finalized grid + stale end-of-run positions -> "Out of range atoms - cannot
-# compute PPPM" when an atom sat at the brick edge (and, latent, it measured the OLD grid on NPT).
-# Fix: recalibrate ONLY when the PPPM grid signature {nx,ny,nz}_pppm + g_ewald changes (grid_changed()),
-# evaluated in pre_force. This deck does the exact in-memory transition that crashed the Ag cell:
+# setup_pre_force runs BEFORE kspace->setup() (verlet.cpp), so a recip_self recalibration there would
+# run PPPM particle_map on a not-yet-finalized grid with stale end-of-run positions ("Out of range atoms -
+# cannot compute PPPM" when an atom sits at the brick edge). The fix recalibrates ONLY when the PPPM grid
+# signature {nx,ny,nz}_pppm + g_ewald changes (grid_changed()), evaluated in pre_force. This deck runs
 # run -> reset_timestep + change timestep + swap in a new integrator fix + a fresh dump -> run, with
 # lr_ewald=2 (pppm/samqeq, the recip_self path). Frozen (run 0, no integration) => deterministic.
-# Post-fix: the grid is unchanged across the two runs, so recip_self is calibrated EXACTLY ONCE and the
-# charges reproduce byte-for-byte. (Pre-fix this path recalibrated twice and risked the edge-atom crash.)
+# The grid is unchanged across the two runs, so recip_self is calibrated EXACTLY ONCE and the
+# charges reproduce byte-for-byte.
 units           metal
 atom_style      full
 boundary        p p p
@@ -38,7 +35,7 @@ thermo_style    custom step pe
 timestep        0.0010
 # ---- first run: recip_self calibrated once (lr_calibrated 0 -> 1, grid signature cached) ----
 run             0
-# ---- the in-memory transition that crashed the Ag cell A->B: dt change + integrator add + fresh dump ----
+# ---- the in-memory transition: dt change + integrator add + fresh dump ----
 reset_timestep  0
 timestep        0.0005
 fix             mov fq nve

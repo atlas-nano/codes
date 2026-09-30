@@ -12,7 +12,7 @@ Reading data file ...
   1 by 1 by 1 MPI processor grid
   reading atoms ...
   3000 atoms
-  read_data CPU = 0.017 seconds
+  read_data CPU = 0.008 seconds
 pair_style      reaxff NULL safezone 3.0 mincap 150
 pair_coeff      * * qeq_ff.water O H
 WARNING: Changed valency_val to valency_boc for X (src/REAXFF/reaxff_ffield.cpp:302)
@@ -76,9 +76,9 @@ Neighbor list info ...
 Per MPI rank memory allocation (min/avg/max) = 539.2 | 539.2 | 539.2 Mbytes
    Step         PotEng        v_ereax    
          0  -257042.9781199530 -257042.9781199530
-Loop time of 1.159e-06 on 1 procs for 0 steps with 3000 atoms
+Loop time of 7.3e-07 on 1 procs for 0 steps with 3000 atoms
 
-258.8% CPU use with 1 MPI tasks x 1 OpenMP threads
+274.0% CPU use with 1 MPI tasks x 1 OpenMP threads
 
 MPI task timing breakdown:
 Section |  min time  |  avg time  |  max time  |%varavg| %total
@@ -88,7 +88,7 @@ Neigh   | 0          | 0          | 0          |   0.0 |  0.00
 Comm    | 0          | 0          | 0          |   0.0 |  0.00
 Output  | 0          | 0          | 0          |   0.0 |  0.00
 Modify  | 0          | 0          | 0          |   0.0 |  0.00
-Other   |            | 1.159e-06  |            |       |100.00
+Other   |            | 7.3e-07    |            |       |100.00
 
 Nlocal:           3000 ave        3000 max        3000 min
 Histogram: 1 0 0 0 0 0 0 0 0 0

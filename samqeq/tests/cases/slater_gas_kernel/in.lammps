@@ -1,4 +1,4 @@
-# Regression case: the exact Slater-overlap shielding kernel, one gas-phase TIP4P-FQ molecule, run 0.
+# The exact Slater-overlap shielding kernel, one gas-phase TIP4P-FQ molecule, run 0.
 #
 # The Slater kernel is Rick's own J(r), so the model's raw Slater exponents are used with no refit
 # (water4_gas_slater.param: the fourth column is zeta in 1/Angstrom). Types 1 (O) and 3 (M) use the 2s

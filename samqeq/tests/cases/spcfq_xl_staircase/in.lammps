@@ -1,9 +1,8 @@
-# Bit-test: extended-Lagrangian charge dynamics (#15) WITH the #13 Phase B per-type
-# IP-staircase on-site anharmonicity (c3_type/c4_type, param columns 8/9) turned ON for
-# the O type. Exercises the B3.1 staircase force branch in xl_chargeforce, the B3.2
-# apply_quartic_eta() diagonal fill (lr_quartic auto-set by nonzero c3/c4 at param load),
-# and confirms XL stays bounded/deterministic with the anharmonic on-site term active.
-# np=1 + fixed velocity seed => deterministic; locks the XL+staircase propagation path.
+# Bit-test: extended-Lagrangian charge dynamics WITH the per-type IP-staircase on-site
+# anharmonicity (c3_type/c4_type, param columns 8/9) turned ON for the O type. Exercises the
+# staircase force branch in xl_chargeforce, the apply_quartic_eta() diagonal fill (lr_quartic
+# auto-set by nonzero c3/c4 at param load), and confirms XL stays bounded/deterministic with the
+# anharmonic on-site term active. np=1 + fixed velocity seed => deterministic.
 units           metal
 atom_style      full
 boundary        p p p

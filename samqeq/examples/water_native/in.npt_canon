@@ -1,4 +1,4 @@
-# FINAL refit confirmation: SPC-FQ samQEq lr_ewald=2, sigma=3.144 (chosen LJ), eps=0.01275.
+# SPC-FQ samQEq lr_ewald=2, sigma=3.144, eps=0.01275: density, energy and dipole.
 # One run: equilibrate 15 ps, then average rho, etot/mol (ΔHvap), and per-molecule dipole over 15 ps.
 # Writes a restart for the entropy (2PT) run. tol 1e-5 (dipole-accurate).
 units metal
@@ -26,12 +26,11 @@ velocity all create 298 4928459 mom yes rot yes
 timestep 0.001
 fix chg fq qeq/sam 1 0.0 10.0 1.0e-5 spcfq_expt.param
 # The grid self-term is PINNED. Under constant pressure the cell volume changes, the mesh is
-# re-derived and the probe-pair estimator re-selects its pair, so the subtracted self-term drifts:
-# unpinned, this deck recalibrates 384 times over 30 ps across 0.37573-0.38261 (1.83%). That drift
-# silently re-tunes the model, and since two runs in three abort on the consistency guard.
+# re-derived and the probe-pair estimator re-selects its pair, so an unpinned self-term drifts
+# (here over 0.37573-0.38261, 1.83%), which silently re-tunes the model and can trip the consistency guard.
 # 0.37933 is the value the calibration returns for this system at its production geometry (np 1/2/4/8,
-# identical to five decimals). With it, three seeds give rho 0.9970(8) g/cc and dipole 2.7972(17) D,
-# the Table 5 native column. Do NOT copy this number to another system -- it is geometry-specific.
+# identical to five decimals). With it, three seeds give rho 0.9970(8) g/cc and dipole 2.7972(17) D.
+# Do NOT copy this number to another system -- it is geometry-specific.
 fix_modify chg recip_self 0.37933
 fix integ all rigid/npt/small molecule temp 298 298 0.1 iso 1.0 1.0 1.0
 variable nmol equal count(fq)/3
@@ -45,7 +44,7 @@ variable etotmol equal (pe+c_eonsum)/v_nmol
 variable rho equal density
 thermo 1000
 thermo_style custom step temp press density pe v_etotmol c_dip c_qOav
-# single run (no 2nd run -> no pppm/samqeq re-setup segfault); average over the back half (steps 15k-30k)
+# single run; average over the back half (steps 15k-30k)
 fix avg all ave/time 10 1500 30000 v_rho v_etotmol c_dip c_qOav
 run 30000
 variable rhoF equal f_avg[1]

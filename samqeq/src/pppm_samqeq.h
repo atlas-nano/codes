@@ -66,7 +66,7 @@ class PPPMSamqeq : public PPPM, public SamqeqKspace {
   // with M_z/S2/qsum summed over the SOURCE group, is added for sensor atoms —
   // the exact charge-gradient of PPPM::slabcorr()'s energy, so the charge solve
   // minimizes the same functional whose forces slabcorr() applies.
-  // implements SamqeqKspace; pppm/samqeq/kk provides a device FFT version (Phase 3). The fix
+  // implements SamqeqKspace; pppm/samqeq/kk provides a device FFT version. The fix
   // dynamic_casts force->kspace to SamqeqKspace*, so the right backend's compute_vector runs.
   void compute_vector(double *vec, int sensor_grpbit, int source_grpbit, bool invert_source) override;
 
@@ -77,7 +77,7 @@ class PPPMSamqeq : public PPPM, public SamqeqKspace {
   // Position-independent => ZERO force impact (dynamics unaffected); this corrects the reported energy only.
   void compute(int eflag, int vflag) override;
 
-  // R4: exact per-atom grid self-coefficient (see samqeq_kspace.h). Kernel table rebuilt when the grid
+  // Exact per-atom grid self-coefficient (see samqeq_kspace.h). Kernel table rebuilt when the grid
   // signature {nx,ny,nz,g_ewald,box} changes (one backward FFT); per atom ~ (2P-1)^3 flops.
   bool compute_self_peratom(double *out, int grpbit) override;
   double self_image_term() const override { return self_xi; }
@@ -97,7 +97,7 @@ class PPPMSamqeq : public PPPM, public SamqeqKspace {
   void start_compute();
   void make_rho_in_brick(int source_grpbit, FFT_SCALAR ***scratch_brick, bool invert_source);
   void project_psi(double *vec, int sensor_grpbit);
-  // R4: real-space grid kernel Kr(D) for |D| <= order-1 in each direction ((2P-1)^3 values, replicated)
+  // Real-space grid kernel Kr(D) for |D| <= order-1 in each direction ((2P-1)^3 values, replicated)
   std::vector<double> self_kern;
   int self_kern_nx = -1, self_kern_ny = -1, self_kern_nz = -1;
   double self_kern_gewald = 0.0, self_kern_prd[3] = {0.0, 0.0, 0.0};

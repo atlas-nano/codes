@@ -1,10 +1,9 @@
-# Periodic SAWTOOTH field through full Ewald on a z-PERIODIC cell -- the path opened by narrowing
-# the samQEq periodic-direction efield guard (fix_qeq_base_sam.cpp, 2026-08-22). A constant
-# E_z along a periodic axis is still refused (ill-defined: -E.z is not periodic). An ATOM-STYLE
-# potential is a function of the WRAPPED coordinate and therefore periodic by construction; the
-# user supplies the sawtooth, exactly as VASP's EFIELD/LDIPOL does it. This case pins that path:
-# if a future change re-tightens the guard the deck errors; if it perturbs the coupling the
-# charges move. Same water slab as slab_ewald3dc; box 12.4 A in z, slab in the lower ~9 A.
+# Periodic SAWTOOTH field through full Ewald on a z-PERIODIC cell. A constant E_z along a periodic
+# axis is refused (ill-defined: -E.z is not periodic). An ATOM-STYLE potential is a function of the
+# WRAPPED coordinate and therefore periodic by construction; the user supplies the sawtooth, exactly
+# as VASP's EFIELD/LDIPOL does it. This case pins that path: if the periodic-direction efield guard
+# (fix_qeq_base_sam.cpp) refuses it the deck errors; if the coupling changes the charges move.
+# Same water slab as slab_ewald3dc; box 12.4 A in z, slab in the lower ~9 A.
 units           metal
 atom_style      full
 boundary        p p p

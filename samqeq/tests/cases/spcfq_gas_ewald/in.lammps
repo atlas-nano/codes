@@ -1,8 +1,8 @@
-# Bit-correctness + documented-reference check: a single SPC-FQ molecule in a
+# Bit-correctness + reference check: a single SPC-FQ molecule in a
 # large periodic box, solved with the long-range path (pppm/samqeq, lr_ewald=2,
 # spcfq_expt.param). The mean per-molecule dipole c_dip should reproduce the
-# recorded pre-port gas value ~1.855 D -> proves pppm/samqeq's compute_vector
-# matches the former pppm/electrode result. Single-molecule pppm => run at np=1.
+# reference gas value ~1.855 D, which checks pppm/samqeq's compute_vector.
+# Single-molecule pppm => run at np=1.
 units           metal
 atom_style      full
 boundary        p p p

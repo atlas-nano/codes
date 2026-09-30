@@ -4,7 +4,7 @@ Parity checker for the samQEq C++ Slater-overlap kernel (slater_jtable.h::slater
 
 This is an INDEPENDENT re-implementation (in numpy, from the C++ source's own constants
 and algebra -- NOT an import of jrab.py) of slater_jtable.h::slater_jraw, checked against
-jrab.py's jrab_raw (the validated Python reference the C++ was transcribed from) over
+jrab.py's jrab_raw (the validated Python reference) over
 r in [0.05, 10] Angstrom for the three pairs Rick's TIP4P-FQ actually samples:
   O-O / M-M  (2s-2s, zeta_O)
   M-H        (2s(O)-1s(H), zeta_O/zeta_H)   -- Rick's "johr" pairing

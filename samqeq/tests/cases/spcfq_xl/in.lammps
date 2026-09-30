@@ -1,4 +1,4 @@
-# Bit-test: extended-Lagrangian charge dynamics (#15). Short NVE run with the
+# Bit-test: extended-Lagrangian charge dynamics. Short NVE run with the
 # charges as dynamic DOF (fix_modify chg xl), exercising initial_integrate /
 # final_integrate / xl_chargeforce / the qeq_matvec operator over several steps.
 # np=1 + fixed velocity seed => deterministic; locks the XL propagation path.

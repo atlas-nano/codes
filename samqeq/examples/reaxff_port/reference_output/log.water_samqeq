@@ -11,7 +11,7 @@ Reading data file ...
   1 by 1 by 1 MPI processor grid
   reading atoms ...
   3000 atoms
-  read_data CPU = 0.017 seconds
+  read_data CPU = 0.007 seconds
 pair_style      hybrid/overlay reaxff NULL checkqeq no safezone 3.0 mincap 150 coul/long 10.0
 pair_coeff      * * reaxff qeq_ff.water O H
 WARNING: Changed valency_val to valency_boc for X (src/REAXFF/reaxff_ffield.cpp:302)
@@ -77,7 +77,7 @@ PPPM initialization ...
   estimated relative force accuracy = 9.8078989e-06
   using double precision FFTW3
   3d grid and FFT values/proc = 27000 15625
-WARNING: samqeq: E_self EXCLUDED from pe/etotal (fix_modify chg energy no): thermo pe is NOT the energy the forces integrate; wall targets, dH and dU derived from pe are incomplete by exactly f_chg (src/fix_qeq_sam.cpp:340)
+WARNING: samqeq: E_self EXCLUDED from pe/etotal (fix_modify chg energy no): thermo pe is NOT the energy the forces integrate; wall targets, dH and dU derived from pe are incomplete by exactly f_chg (src/fix_qeq_sam.cpp:324)
 samqeq: no molecule IDs -> one global fragment (global charge-neutrality constraint)
 Neighbor list info ...
   update: every = 1 steps, delay = 0 steps, check = yes
@@ -110,9 +110,9 @@ samqeq SOLVER-DIAG step 0: CG 69 iters (=69 matvecs), resid/b=1.94e-11
 Per MPI rank memory allocation (min/avg/max) = 546 | 546 | 546 Mbytes
    Step         PotEng        v_ereax    
          0  -257042.9781199448 -257042.9781199448
-Loop time of 1.272e-06 on 1 procs for 0 steps with 3000 atoms
+Loop time of 8.76e-07 on 1 procs for 0 steps with 3000 atoms
 
-235.8% CPU use with 1 MPI tasks x 1 OpenMP threads
+114.2% CPU use with 1 MPI tasks x 1 OpenMP threads
 
 MPI task timing breakdown:
 Section |  min time  |  avg time  |  max time  |%varavg| %total
@@ -123,7 +123,7 @@ Neigh   | 0          | 0          | 0          |   0.0 |  0.00
 Comm    | 0          | 0          | 0          |   0.0 |  0.00
 Output  | 0          | 0          | 0          |   0.0 |  0.00
 Modify  | 0          | 0          | 0          |   0.0 |  0.00
-Other   |            | 1.272e-06  |            |       |100.00
+Other   |            | 8.76e-07   |            |       |100.00
 
 Nlocal:           3000 ave        3000 max        3000 min
 Histogram: 1 0 0 0 0 0 0 0 0 0

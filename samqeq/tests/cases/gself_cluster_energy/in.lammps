@@ -1,4 +1,4 @@
-# gself regression: 7-atom cluster (types 1 = Au-like, 2 = O-like), pppm/samqeq, `gself on width 0.50 types 1`.
+# gself: 7-atom cluster (types 1 = Au-like, 2 = O-like), pppm/samqeq, `gself on width 0.50 types 1`.
 # pe.txt pins the reported pe of two arms:
 #   A  plain gself                  pe carries 1/2 E_self Sum s^2 over type 1 (compute_scalar)
 #   C  gself + quartic on atom 6    the quartic diagonal is seeded from the chemical eta, so E_self enters once

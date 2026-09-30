@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# samQEq multi-rank release check . Run by hand before a cluster release, next to perturb.sh; NOT in the
-# pre-commit hook (it takes ~4-5 min).
+# samQEq multi-rank check. Run by hand, next to perturb.sh; NOT in the pre-commit hook (it takes ~4-5 min).
 #
-# molinv/: the build_molinv S4 cache deadlock (TASKS backlog 26, fixed f611a33, re-verified ,
-# ). A 8100-atom SPC-FQ water box on `processors 2 1 1` whose second
-# rank's atom storage regrows at step ~126, so the ranks disagree on the molinv cache verdict. Before f611a33 the two
-# Allreduces inside build_molinv ran on some ranks only and the run HUNG silently. The check FAILS on any of:
+# molinv/: the build_molinv cache under rank-asymmetric storage regrowth. A 8100-atom SPC-FQ water box on
+# `processors 2 1 1` whose second rank's atom storage regrows at step ~126, so the ranks disagree on the molinv
+# cache verdict. build_molinv must reconcile that verdict across ranks before its collectives; if it does not, the
+# ranks enter different Allreduces and the run hangs. The check FAILS on any of:
 #   1. HANG      - the run does not finish within TMO seconds (default 900; rc 124 from `timeout`)
 #   2. ABORT     - non-zero exit, or no REPRO_COMPLETED line
 #   3. VACUOUS   - the recovery warning "build_molinv cache validity diverged across ranks" never printed, i.e. the
 #                  asymmetric regrow did not happen and the check tested nothing (layout/deck/binary changed)
 #   4. WRONG     - step-0 charges or pe at steps 0-50 differ from the 1-rank reference (golden/): max|dq| > 1e-9 e or
-#                  pe rel. diff > 1e-9 (measured 1e-12 and 12 identical digits)
+#                  pe rel. diff > 1e-9
 #
 # Usage:  ./parallel.sh                 # the check at np 2
 #         ./parallel.sh --update        # regenerate golden/ from a 1-rank run of the same deck
@@ -62,7 +61,7 @@ PY
 fi
 if [ $fail -eq 0 ]; then echo "PASS molinv np2: completed in ${dt}s, recovered ($w), ${res#OK }"; rm -rf "$W"
 else echo "  work dir kept: $W"; fi
-# (row 182): np-invariance of the recip_self calibration under five processor grids (+ a sort-order arm).
+# np-invariance of the recip_self calibration under five processor grids (+ a sort-order arm).
 LMP="$LMP" "$HERE/npinv.sh" || fail=1
 echo "-----"; echo "parallel: $( [ $fail -eq 0 ] && echo PASS || echo FAIL )"
 exit $fail

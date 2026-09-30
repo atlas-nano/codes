@@ -16,7 +16,7 @@ Reading data file ...
   1 by 1 by 1 MPI processor grid
   reading atoms ...
   21 atoms
-  read_data CPU = 0.001 seconds
+  read_data CPU = 0.000 seconds
 pair_style      hybrid/overlay reaxff control.reax_c.rdx checkqeq no coul/long 10.0
 WARNING: Ignoring inactive control parameter: simulation_name (src/REAXFF/reaxff_control.cpp:94)
 WARNING: Ignoring inactive control parameter: energy_update_freq (src/REAXFF/reaxff_control.cpp:94)
@@ -98,7 +98,7 @@ WARNING: Using kspace solver on system with no charge (src/kspace.cpp:317)
   estimated relative force accuracy = 0
   using double precision FFTW3
   3d grid and FFT values/proc = 729 64
-WARNING: samqeq: E_self EXCLUDED from pe/etotal (fix_modify chg energy no): thermo pe is NOT the energy the forces integrate; wall targets, dH and dU derived from pe are incomplete by exactly f_chg (src/fix_qeq_sam.cpp:340)
+WARNING: samqeq: E_self EXCLUDED from pe/etotal (fix_modify chg energy no): thermo pe is NOT the energy the forces integrate; wall targets, dH and dU derived from pe are incomplete by exactly f_chg (src/fix_qeq_sam.cpp:324)
 samqeq: no molecule IDs -> one global fragment (global charge-neutrality constraint)
 Neighbor list info ...
   update: every = 10 steps, delay = 0 steps, check = no
@@ -131,9 +131,9 @@ samqeq SOLVER-DIAG step 0: CG 19 iters (=19 matvecs), resid/b=4.87e-12
 Per MPI rank memory allocation (min/avg/max) = 16.6 | 16.6 | 16.6 Mbytes
    Step         PotEng        v_ereax    
          0  -1884.3080826952 -1884.3080826952
-Loop time of 1.041e-06 on 1 procs for 0 steps with 21 atoms
+Loop time of 4.9e-07 on 1 procs for 0 steps with 21 atoms
 
-96.1% CPU use with 1 MPI tasks x 1 OpenMP threads
+204.1% CPU use with 1 MPI tasks x 1 OpenMP threads
 
 MPI task timing breakdown:
 Section |  min time  |  avg time  |  max time  |%varavg| %total
@@ -144,7 +144,7 @@ Neigh   | 0          | 0          | 0          |   0.0 |  0.00
 Comm    | 0          | 0          | 0          |   0.0 |  0.00
 Output  | 0          | 0          | 0          |   0.0 |  0.00
 Modify  | 0          | 0          | 0          |   0.0 |  0.00
-Other   |            | 1.041e-06  |            |       |100.00
+Other   |            | 4.9e-07    |            |       |100.00
 
 Nlocal:             21 ave          21 max          21 min
 Histogram: 1 0 0 0 0 0 0 0 0 0

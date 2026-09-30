@@ -1,10 +1,10 @@
-# A5 regression: molecule-OPTIONAL solve. Bare atom_style charge (NO molecule IDs)
+# Molecule-OPTIONAL solve. Bare atom_style charge (NO molecule IDs)
 # periodic binary solid on the full long-range path (pppm/samqeq, lr_ewald=2).
-# Without molecule IDs build_molinv/project_neutral fall back to ONE global fragment,
+# Without molecule IDs build_molinv/project_neutral use ONE global fragment,
 # i.e. the projector enforces GLOBAL charge neutrality — the standard QEq constraint
 # for a solid. Two chi's (type 1 soft donor slab / type 2 acceptor slab) force a real
 # inter-slab charge transfer through the global constraint + PPPM reciprocal, so this
-# pins the whole molecule-free lr solve. Pre-A5 this deck was a hard error.
+# pins the whole molecule-free lr solve.
 units           metal
 atom_style      charge
 boundary        p p p

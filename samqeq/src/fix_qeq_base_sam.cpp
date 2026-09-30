@@ -41,9 +41,8 @@
 
 #include "math_special.h"   // core: square()/cube() (replaces reaxff_defs.h SQR/CUBE)
 
-// SQR/CUBE formerly came from reaxff_defs.h (via reaxff_api.h); map them to the core
-// MathSpecial helpers so this ported base needs no REAXFF package while keeping the
-// upstream call sites verbatim. The sizing knobs below are likewise inlined defaults
+// SQR/CUBE map to the core MathSpecial helpers so this base needs no REAXFF package
+// while keeping the upstream call sites verbatim. The sizing knobs below are likewise inlined defaults
 // (samQEq is file-mode only — no reaxff pair).
 #define SQR(x)  MathSpecial::square(x)
 #define CUBE(x) MathSpecial::cube(x)
@@ -60,7 +59,7 @@ using namespace FixConst;
 
 // NOTE: the Coulomb prefactor is force->qqrd2e (units-agnostic: 14.399645 eV·Å in metal,
 // 332.06 kcal/mol·Å in real), matching the DSF/Ewald paths and the LAMMPS QEQ convention
-// (cf. fix qeq/slater). The old hardcoded 14.4 was a rounded metal-only value.
+// (cf. fix qeq/slater).
 static constexpr double SMALL = 1.0e-14;
 static constexpr double QSUMSMALL = 0.00001;
 
@@ -82,11 +81,10 @@ FixQEqBaseSam::FixQEqBaseSam(LAMMPS *lmp, int narg, char **arg) :
 {
   scalar_flag = 1;
   extscalar = 0;
-  imax = 1000;   // #29: was 200 (the qeq/reaxff default). The near-singular METAL saddle (BiCGStab,
-                 // diagonal precond) needs ~hundreds–1000 iters; 200 silently truncated it to a wrong charge
-                 // for a user who forgot `maxiter`/ILU. Converging solves stop at convergence regardless of
-                 // the cap (well-conditioned cases finish in <50), so this only HELPS the metal case —
-                 // byte-identical for everything else; override with `maxiter <N>` as before.
+  imax = 1000;   // above the qeq/reaxff default of 200: the near-singular METAL saddle (BiCGStab,
+                 // diagonal precond) needs ~hundreds–1000 iters, and a lower cap truncates it to a wrong
+                 // charge. Converging solves stop at convergence regardless of the cap (well-conditioned
+                 // cases finish in <50), so only the metal case is affected; override with `maxiter <N>`.
   maxwarn = 1;
 
   if ((narg < 8) || (narg > 12)) error->all(FLERR,"Illegal fix qeq/reaxff command");
@@ -99,7 +97,7 @@ FixQEqBaseSam::FixQEqBaseSam(LAMMPS *lmp, int narg, char **arg) :
   tolerance = utils::numeric(FLERR,arg[6],false,lmp);
   pertype_option = utils::strdup(arg[7]);
 
-  // A7 (, R2): internal hardcoded eV-anchored constants scale by this at
+  // Units policy: internal hardcoded eV-anchored constants scale by this at
   // point of use; charge/geometry/time constants never do. update->unit_style is valid here (units
   // precedes all fix commands). Runs first in the ctor chain (FixQEqBaseSam is the base of
   // FixACKS2Sam/FixQEqSam), so every derived-class ctor default that wants ev_scale can use it.
@@ -127,7 +125,7 @@ FixQEqBaseSam::FixQEqBaseSam(LAMMPS *lmp, int narg, char **arg) :
   s = nullptr;
   t = nullptr;
   nprev = 4;
-  // : DECLARE the per-atom exchange payload (LAMMPS contract: any fix whose pack_exchange
+  // DECLARE the per-atom exchange payload (LAMMPS contract: any fix whose pack_exchange
   // appends data must set Fix::maxexchange, else Comm/Irregular size their exchange buffers
   // without it — an undersized-slack heap overrun that corrupts adjacent packed atoms). Base
   // packs s_hist only (nprev); FixACKS2Sam/FixQEqSam override both pack_exchange AND this value.
@@ -163,11 +161,11 @@ FixQEqBaseSam::FixQEqBaseSam(LAMMPS *lmp, int narg, char **arg) :
 
   s_hist = t_hist = nullptr;
 
-  // ASPC (#16): off by default => exact BO path; q_hist allocated in grow_arrays, reset on neighbor rebuild
+  // ASPC: off by default => exact BO path; q_hist allocated in grow_arrays, reset on neighbor rebuild
   aspc_on = 0; aspc_ncorr = 1; aspc_korder = 2; aspc_nhist = 4;
   aspc_have = 0; aspc_build = -1; aspc_omega = 4.0/7.0; q_hist = nullptr; ngroup_fq = 0;
-  aspc_rtol = 1.0e-2; cg_relresid = 0.0;   // #16 quality gate: accept the corrector only if rel-resid < rtol
-  aspc_naccept = 0; aspc_nreject = 0;      // S1b diag: cumulative corrector accept/reject counters
+  aspc_rtol = 1.0e-2; cg_relresid = 0.0;   // quality gate: accept the corrector only if rel-resid < rtol
+  aspc_naccept = 0; aspc_nreject = 0;      // diag: cumulative corrector accept/reject counters
   for (int j = 0; j < 8; ++j) aspc_B[j] = 0.0;
 
   atom->add_callback(Atom::GROW);
@@ -187,7 +185,7 @@ FixQEqBaseSam::~FixQEqBaseSam()
 
   memory->destroy(s_hist);
   memory->destroy(t_hist);
-  memory->destroy(q_hist);   // ASPC (#16)
+  memory->destroy(q_hist);   // ASPC
 
   FixQEqBaseSam::deallocate_storage();
   FixQEqBaseSam::deallocate_matrix();
@@ -336,13 +334,12 @@ void FixQEqBaseSam::reallocate_matrix()
 /* ----------------------------------------------------------------------
    Guarantee the H CSR arrays can hold THIS step's fill.
 
-   ★ Why (2026-08-15, found at 128 MPI ranks): allocate_matrix() sizes m_cap once from the
-   neighbour counts of the moment, and pre_force() only regrows when the PREVIOUS step's
-   m_fill crossed DANGER_ZONE (0.90). At high rank counts a rank owns few atoms (~29 at 128
-   ranks on a 3.7k-atom box), so a single migrating atom can lift the fill >11 % in ONE step
-   and overflow m_cap before any guard observes it: compute_H then dies with
-   "samqeq: H matrix overflow", killing the run (it survived ~200 steps in a production
-   test). Widening the margin only moves the cliff; sizing from the CURRENT list removes it.
+   ★ Why: allocate_matrix() sizes m_cap once from the neighbour counts of the moment, and
+   pre_force() only regrows when the PREVIOUS step's m_fill crossed DANGER_ZONE (0.90). At high
+   rank counts a rank owns few atoms, so a single migrating atom can lift the fill >10 % in ONE
+   step and overflow m_cap before any guard observes it (compute_H then stops with
+   "samqeq: H matrix overflow"). Widening the margin only moves the cliff; sizing from the
+   CURRENT list removes it.
 
    sum(numneigh) over ilist is a strict UPPER BOUND on m_fill (compute_H additionally drops
    non-group columns, applies the swb cutoff and half-list dedup), so m_cap >= that sum makes
@@ -392,29 +389,23 @@ void FixQEqBaseSam::init()
   // ensure that fix efield is properly initialized before accessing its data and check some settings
   if (efield) {
     efield->init();
-    // A7 efield FIX : the inherited qeq/reaxff units-real-only restriction is LIFTED. It existed
-    // because reaxff's chi/eta are always eV (hardcoded 14.4 eV*Ang Coulomb), so its efield coupling had
-    // to convert the units-real field back to eV (factor -1/qe2f in get_chi_field). samQEq runs chi/eta/H
-    // in NATIVE DECK UNITS (force->qqrd2e), so get_chi_field now uses factor = -1.0 (chi_field = deck
-    // energy/e, see the unit-chain comment there) and fix efield works in BOTH metal and real -- metal
-    // was the dimensionally-consistent case all along. (Unit-style gating overall is handled in the
-    // ctor: ev_scale errors on anything but metal/real.) Behavioral delta vs earlier: metal+efield decks
-    // now RUN instead of erroring; real+efield response is x23.060549 STRONGER (the old coupling was
-    // under-scaled against native-unit chi).
+    // Unlike qeq/reaxff (whose chi/eta are always eV), samQEq runs chi/eta/H in NATIVE DECK UNITS
+    // (force->qqrd2e), so get_chi_field uses factor = -1.0 (chi_field = deck energy/e, see the
+    // unit-chain comment there) and fix efield works in BOTH metal and real. (Unit-style gating overall
+    // is handled in the ctor: ev_scale errors on anything but metal/real.)
 
     if (efield->varflag == FixEfield::ATOM && efield->pstyle != FixEfield::ATOM)
       error->all(FLERR, Error::NOLASTLINE, "Atom-style external electric field requires atom-style"
                  "potential variable when used with fix {}", style);
-    // PERIODIC-DIRECTION GUARD (narrowed 2026-08-22, gamma_align K5 / ANALYSIS_samqeq_metal_screening.md).
-    // Only a CONSTANT field component along a periodic axis is ill-defined: its potential -E.x is not
+    // PERIODIC-DIRECTION GUARD. Only a CONSTANT field component along a periodic axis is ill-defined: its potential -E.x is not
     // periodic, so get_chi_field's unmapped coordinate makes the RHS depend on image flags. An
     // ATOM-STYLE potential is different -- it is a user function of the WRAPPED coordinates and is
     // therefore periodic by construction. That is exactly how a field is applied across a slab in a
     // periodic cell (a sawtooth: -E.z over the slab, compensated in the vacuum), i.e. what VASP's
-    // EFIELD/LDIPOL does and what the K5 benchmark used. Forbidding it forced every samQEq field
-    // calculation onto cutoff electrostatics, which a metal slab cannot tolerate (the truncated
-    // lattice sum gives the interlayer coupling the wrong sign and a staggered lowest mode -> layer
-    // charges alternate at 3.5x the Gauss limit). The user owns the physics of the potential they
+    // EFIELD/LDIPOL does. Forbidding it would force every samQEq field calculation onto cutoff
+    // electrostatics, which a metal slab cannot tolerate (the truncated lattice sum gives the
+    // interlayer coupling the wrong sign and a staggered lowest mode -> alternating layer
+    // charges). The user owns the physics of the potential they
     // supply; the code only has to refuse the case it genuinely cannot represent.
     const bool atom_pot = (efield->varflag == FixEfield::ATOM && efield->pstyle == FixEfield::ATOM);
     if (!atom_pot) {
@@ -568,7 +559,7 @@ void FixQEqBaseSam::init_storage()
 
 
 /* ----------------------------------------------------------------------
-   ASPC (#16) — q-direct predictor-corrector. UNTESTED draft; needs a build+debug cycle.
+   ASPC — q-direct predictor-corrector: coefficient setup.
    Targets the QEq base (global neutrality, sum q = 0). NOT engaged for the ACKS2 saddle (it keeps
    aspc_on=0 -> BO).
 -------------------------------------------------------------------------*/
@@ -635,11 +626,10 @@ void FixQEqBaseSam::compute_H()
         j = jlist[jj];
         j &= NEIGHMASK;
 
-        // COLUMN group test (2026-08-02) -- see the full rationale in FixQEqSam::compute_H
+        // COLUMN group test -- see the full rationale in FixQEqSam::compute_H
         // (fix_qeq_sam.cpp). In brief: H multiplies the solve vector, so a column for a non-group
         // atom multiplies never-written workspace (silent garbage) or zero (missing physics); the
-        // field of fixed non-group charges belongs in the RHS. Whole-system solves are unaffected
-        // => byte-identical.
+        // field of fixed non-group charges belongs in the RHS. Whole-system solves are unaffected.
         if (!(mask[j] & groupbit)) continue;
 
         dx = x[j][0] - x[i][0];
@@ -665,10 +655,9 @@ void FixQEqBaseSam::compute_H()
           if (m_fill >= H.m)
             error->one(FLERR, "samqeq: H matrix overflow at atom {} (m_fill {} >= {})", i, m_fill, H.m);
           H.jlist[m_fill] = j;
-          // calc_Hval (virtual): default = this SAME shld/calculate_H lookup (byte-identical); FixQEqSam
-          // overrides it to route through the Slater J(r) table when shield_gauss==SHIELD_SLATER (the legacy/
-          // gas path re-inlined cbrt here, unreachable from shielded_coulomb() -- audit finding, samQEq
-          //  item 3).
+          // calc_Hval (virtual): default = the shld/calculate_H lookup; FixQEqSam overrides it to
+          // route through the Slater J(r) table when shield_gauss==SHIELD_SLATER, so this gas path uses
+          // the same kernel as shielded_coulomb().
           H.val[m_fill] = calc_Hval(sqrt(r_sqr), type[i], type[j]);
           m_fill++;
         }
@@ -704,9 +693,9 @@ double FixQEqBaseSam::calculate_H(double r, double gamma)
 
 /* ----------------------------------------------------------------------*/
 
-/* calc_Hval(r,ti,tj): default = the ORIGINAL inline shld-via-calculate_H lookup, i.e. byte-identical to
-   the pre-slater code for every class that doesn't override this (and for FixQEqSam itself whenever
-   shield_gauss != SHIELD_SLATER -- see FixQEqSam::calc_Hval, fix_qeq_sam.cpp).*/
+/* calc_Hval(r,ti,tj): default = the inline shld-via-calculate_H lookup, used by every class that
+   doesn't override this (and by FixQEqSam itself whenever shield_gauss != SHIELD_SLATER -- see
+   FixQEqSam::calc_Hval, fix_qeq_sam.cpp).*/
 double FixQEqBaseSam::calc_Hval(double r, int ti, int tj)
 {
   return calculate_H(r, shld[ti][tj]);
@@ -796,7 +785,7 @@ void FixQEqBaseSam::grow_arrays(int nmax)
 {
   memory->grow(s_hist,nmax,nprev,"qeq:s_hist");
   memory->grow(t_hist,nmax,nprev,"qeq:t_hist");
-  // ASPC (#16): q-history; sized to the max supported order (k<=4 -> nhist<=6). This BASE-class
+  // ASPC: q-history; sized to the max supported order (k<=4 -> nhist<=6). This BASE-class
   // copy_arrays/pack_exchange (below) do NOT migrate it, but FixQEqBaseSam has no FixStyle (base only);
   // the concrete FixACKS2Sam (used by qeq/sam) OVERRIDES grow_arrays/copy_arrays/pack_exchange and DOES
   // migrate q_hist (see fix_acks2_sam.cpp), so in practice it always travels with the atom.
@@ -948,14 +937,13 @@ void FixQEqBaseSam::get_chi_field()
   Region *region = efield->region;
   if (region) region->prematch();
 
-  // A7 efield FIX (, user-authorized -- "efield fix applied"):
   // UNIT CHAIN: fix efield stores ex = qe2f*E_input (E_input in V/Ang in BOTH metal and real; qe2f =
   // 1.0 metal / 23.060549 real), i.e. deck-FORCE per charge = deck-ENERGY/(e*Ang). factor = -1.0
   // therefore leaves chi_field = -(stored ex)*x in NATIVE DECK ENERGY UNITS per e (eV/e metal,
   // kcal/mol/e real) -- exactly what the RHS wants, since it is summed with the native-deck-unit chi
-  // (b_s = -chi - chi_field). The historical qeq/reaxff factor -1/qe2f cancelled the qe2f and gave
-  // TRUE eV/e, correct for reaxff's always-eV chi (hardcoded 14.4 Coulomb) but 23.06x too weak
-  // against samQEq's native-unit chi in units real. Byte-identical in units metal (qe2f == 1.0).
+  // (b_s = -chi - chi_field). qeq/reaxff's factor -1/qe2f gives TRUE eV/e instead, which suits its
+  // always-eV chi but would be 23.06x too weak against samQEq's native-unit chi in units real.
+  // In units metal the two agree (qe2f == 1.0).
 
   const double factor = -1.0;
 
@@ -982,10 +970,10 @@ void FixQEqBaseSam::get_chi_field()
       }
     }
   } else { // must use atom-style potential from FixEfield
-    // A7 efield FIX: efield[i][3] holds the potential-variable value in VOLTS (= eV/e); fix efield
+    // efield[i][3] holds the potential-variable value in VOLTS (= eV/e); fix efield
     // itself converts it to deck energy as qe2f*q*phi (fix_efield.cpp fsum). Mirror that here so
     // chi_field = dU/dq = qe2f*phi is in native deck energy units per e, consistent with the
-    // constant-field branch above. Byte-identical in units metal (qe2f == 1.0).
+    // constant-field branch above. qe2f == 1.0 in units metal.
     const double qe2f = force->qe2f;
     for (int i = 0; i < nlocal; i++) {
       if (mask[i] & efgroupbit) {

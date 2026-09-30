@@ -79,7 +79,7 @@ cmake ../cmake -D PKG_SAMQEQ=on -D PKG_KSPACE=on -D PKG_MOLECULE=on -D PKG_RIGID
       -D PKG_EXTRA-FIX=on # + -D PKG_KOKKOS=on ... for GPU, -D PKG_REAXFF=on for examples/reaxff_rdx
 make -j # 4. build
 ./lmp -h | grep -c samqeq # 5. smoke test: a positive count means the styles are registered
-LMP=$PWD/lmp bash <this-release>/tests/run_tests.sh # 6. regression suite: expect failed=0
+LMP=$PWD/lmp bash <this-release>/tests/run_tests.sh # 6. test suite: expect failed=0
 ```
 
 The `kokkos/` sources are kept apart because CMake compiles every `.cpp` in the package directory: copied
@@ -143,7 +143,7 @@ the unit style.
 
 Molecule IDs are not required. Under `atom_style charge` every atom in the group belongs to one fragment, and
 the projector enforces global charge neutrality, the standard QEq constraint for a bare solid. The Kokkos fix
-refuses this case; use `fix qeq/sam`. Regression: `tests/cases/charge_solid_global`.
+refuses this case; use `fix qeq/sam`. Test case: `tests/cases/charge_solid_global`.
 
 ## Long-range routes
 
@@ -153,7 +153,7 @@ matrix-vector product. The solve is a projected conjugate gradient in the per-fr
 
 | `lr_ewald` | route |
 |---|---|
-| `0` | short-range (legacy tapered) or, with `lr_alpha > 0`, damped-shifted force |
+| `0` | short-range (tapered) or, with `lr_alpha > 0`, damped-shifted force |
 | `1` | intramolecular shielding only; intermolecular pairs are bare `1/r` |
 | `2` | all pairs shielded, `J(r) → 1/r` at long range; stable, energy-conserving NVE |
 
@@ -211,7 +211,7 @@ kernel agrees with an independent reference quadrature to a maximum relative dev
 `K_e/(√π w)` of a Gaussian charge of width `w` to the on-site hardness of the listed types (default: all
 types, `w` = 0.5 Å). Widths above about 0.75 Å let the layer charges of a slab alternate in sign, so keep
 `w` at or below 0.5 Å. Without it, the operator of a metallic slab becomes
-indefinite below η ≈ 2.5 eV; with it, the smallest eigenvalue stays positive.
+indefinite once η falls below the contact value of its own kernel (about 3.5 eV for the Au(111) slab of the paper); with it, the smallest eigenvalue stays positive.
 
 ## Solver and run-time controls
 
@@ -282,7 +282,7 @@ MPI rank, four threads give 1.23×; two MPI ranks give 1.80×, so MPI ranks rema
   10⁻⁹ e.
 - **Kernel comparison.** `examples/kernel_comparison/` runs the same system under two kernels, with both decks
   and the reference output.
-- **Regression suite.** `tests/` holds self-contained cases, each compared against committed per-atom
+- **Test suite.** `tests/` holds self-contained cases, each compared against committed per-atom
   charges at 10⁻⁹ relative tolerance. `tests/CASES.txt` lists them. Run with
 
   ```bash
@@ -304,9 +304,9 @@ MPI rank, four threads give 1.23×; two MPI ranks give 1.80×, so MPI ranks rema
 
 ## Version and citation
 
-This is samQEq 1.0.0, archived at Zenodo, https://doi.org/10.5281/zenodo.23043176. If you use it, please cite
-that record and the accompanying paper: N. Solan, D. Sun and T. A. Pascal, "samQEq: charge equilibration for
-molecules and conductors", Computer Physics Communications (submitted).
+This is samQEq 1.0.1, archived at Zenodo, https://doi.org/10.5281/zenodo.23051745. If you use it, please cite
+that record and the accompanying paper: N. Solan, D. Sun and T. A. Pascal, "samQEq: unified charge equilibration
+from molecules to conductors", Computer Physics Communications (submitted).
 
 ## License
 

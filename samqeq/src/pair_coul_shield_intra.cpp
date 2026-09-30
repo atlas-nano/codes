@@ -30,9 +30,9 @@ using MathConst::MY_PIS;   // sqrt(pi)
 PairCoulShieldIntra::PairCoulShieldIntra(LAMMPS *lmp) : Pair(lmp)
 {
   cut = nullptr; gamma = nullptr; intra_only = 1;   // default: intra-only (lr_ewald=1)
-  shield_gauss = 0; shield_lambda = 0.462770;       // default cbrt J_shield (byte-identical); gauss = PQEq erf
+  shield_gauss = 0; shield_lambda = 0.462770;       // default cbrt J_shield; gauss = PQEq erf
   is2s = nullptr;                                   // slater per-type 2s/1s flag (allocated in settings()/read_restart())
-  iondamp_on = 0; iondamp_b = nullptr; iondamp_n = nullptr;   // #5 damped interionic kernel (settings `iondamp`)
+  iondamp_on = 0; iondamp_b = nullptr; iondamp_n = nullptr;   // damped interionic kernel (settings `iondamp`)
 }
 
 /* ----------------------------------------------------------------------*/
@@ -47,8 +47,8 @@ PairCoulShieldIntra::~PairCoulShieldIntra()
     memory->destroy(gamma);
   }
   memory->destroy(is2s);
-  memory->destroy(shield_rpair);   //
-  memory->destroy(iondamp_b); memory->destroy(iondamp_n);   // #5 (settings-time arrays, like is2s)
+  memory->destroy(shield_rpair);
+  memory->destroy(iondamp_b); memory->destroy(iondamp_n);   // (settings-time arrays, like is2s)
 }
 
 /* ----------------------------------------------------------------------*/
@@ -109,11 +109,11 @@ void PairCoulShieldIntra::compute(int eflag, int vflag)
         // ROBUST special_bonds: the SHIELDED (J_shield) part is the FULL intramolecular Coulomb the FQ solve
         // equilibrates against (always full strength, factor 1); ONLY the −1/r compensation tracks what
         // coul/long actually nets for this pair (= factor_coul·1/r). ⇒ net (coul/long + this) = J_shield for
-        // ANY in-list weight, and force↔solve stay consistent. Byte-identical at factor_coul=1. (Pairs DROPPED
-        // from the neighborlist -- special_lj==special_coul==0 WITHOUT a kspace style -- are refused in init_list (s88b).)
+        // ANY in-list weight, and force↔solve stay consistent. (Pairs DROPPED
+        // from the neighborlist -- special_lj==special_coul==0 WITHOUT a kspace style -- are refused in init_list.)
         double K = qqrd2e * qtmp * q[j];
         if (iondamp_on && iondamp_b[itype][jtype] > 0.0) {
-          // #5 DAMPED interionic kernel: net = f_n(b r)·J(r) for this designated (ion) type pair, J from
+          // DAMPED interionic kernel: net = f_n(b r)·J(r) for this designated (ion) type pair, J from
           // whichever shield kernel is active -- mirrors the fix's damped shielded_coulomb() (solve side).
           // E = K(f·J − factor_coul/r); dE/dr = K(b·f′·J + f·J′ + factor_coul/r²); fpair = −(1/r)dE/dr.
           double J, dJdr;
@@ -121,7 +121,7 @@ void PairCoulShieldIntra::compute(int eflag, int vflag)
             int idx = slater_tri_index(itype, jtype, atom->ntypes);
             J = slater_tabs[idx].eval(r, dJdr);
           } else if (shield_gauss == SHIELD_GAUSSIAN) {
-            double aij = pqeq_aij(itype, jtype);   // : per-pair override or the combination rule
+            double aij = pqeq_aij(itype, jtype);   // per-pair override or the combination rule
             J = erf(aij*r)*rinv;
             dJdr = (2.0*aij/MY_PIS)*exp(-aij*aij*rsq)*rinv - J*rinv;   // d(erf(ar)/r)/dr
           } else {
@@ -148,7 +148,7 @@ void PairCoulShieldIntra::compute(int eflag, int vflag)
         } else if (shield_gauss == SHIELD_GAUSSIAN) {
           // PQEq Gaussian: net = erf(α_ij r)/r; correction E = K(erf(α_ij r)/r − factor_coul/r). α_i = λ/(2 Rc_i²),
           // Rc_i = diagonal gamma[i][i], α_ij = √(α_i α_j/(α_i+α_j)) (same as the solve's shielded_coulomb).
-          double aij = pqeq_aij(itype, jtype);   // : per-pair override or the combination rule
+          double aij = pqeq_aij(itype, jtype);   // per-pair override or the combination rule
           double erfar = erf(aij*r), expt = exp(-aij*aij*rsq);
           double r3inv = rinv*r2inv;
           // fpair = −(1/r)dE/dr = K[(erf−factor_coul)/r³ − (2α_ij/√π)exp(−α²r²)/r²] (the erf/expt parts are full)
@@ -196,7 +196,7 @@ void PairCoulShieldIntra::settings(int narg, char **arg)
   if (narg < 1) error->all(FLERR, "Illegal pair_style coul/shield/intra command");
   cut_global = utils::numeric(FLERR, arg[0], false, lmp);
   intra_only = 1;                                    // default: intra-molecular pairs only (lr_ewald=1)
-  shield_gauss = 0;                                  // default: cbrt J_shield (byte-identical)
+  shield_gauss = 0;                                  // default: cbrt J_shield
   // slater per-type 2s/1s flag: allocate HERE (independent of allocate()/gamma/cut/setflag, which aren't
   // sized until the first pair_coeff -- see the header) so `2s <type>...` below can set it immediately, and
   // so it round-trips through write_restart/read_restart even without settings() being reissued (LAMMPS
@@ -204,7 +204,7 @@ void PairCoulShieldIntra::settings(int narg, char **arg)
   memory->destroy(is2s);
   memory->create(is2s, atom->ntypes+1, "pair:is2s");
   for (int i = 0; i <= atom->ntypes; i++) is2s[i] = 0;
-  // #5 iondamp: same settings-time reset semantics as is2s/intra_only/shield_gauss above -- re-issuing
+  // iondamp: same settings-time reset semantics as is2s/intra_only/shield_gauss above -- re-issuing
   // pair_style clears the damping unless the keyword is repeated.
   memory->destroy(iondamp_b); memory->destroy(iondamp_n);
   iondamp_b = nullptr; iondamp_n = nullptr; iondamp_on = 0;
@@ -218,15 +218,14 @@ void PairCoulShieldIntra::settings(int narg, char **arg)
     if (strcmp(arg[k], "all") == 0)          intra_only = 0;
     else if (strcmp(arg[k], "intra") == 0)   intra_only = 1;
     else if (strcmp(arg[k], "gaussian") == 0)  shield_gauss = SHIELD_GAUSSIAN;   // Gaussian erf(α_ij r)/r (PQEq form)
-    else if (strcmp(arg[k], "pqeq") == 0)     // : renamed `gaussian` (it named a force field, not the kernel); alias removed
-      error->all(FLERR, "pair coul/shield/intra:" "the Gaussian shielding kernel keyword `pqeq` was renamed `gaussian` in samQEq (same kernel, same numbers); replace `pqeq` with `gaussian` in the deck");
+    else if (strcmp(arg[k], "pqeq") == 0)     // the keyword names the kernel (`gaussian`), not a force field
+      error->all(FLERR, "pair coul/shield/intra:" "the Gaussian shielding kernel keyword is `gaussian`, not `pqeq` (same kernel); replace `pqeq` with `gaussian` in the deck");
     else if (strcmp(arg[k], "cbrt") == 0)    shield_gauss = SHIELD_CBRT;   // (not "gauss" — collides with pair_style gauss)
     else if (strcmp(arg[k], "slater") == 0)  shield_gauss = SHIELD_SLATER; // Rick Slater-overlap J(r), JCP 101,6141
     else if (strcmp(arg[k], "lambda") == 0) {
-      // (Change A, channel 3): PQEq λ in α_i = λ/(2 Rc_i²). MIRRORS `fix_modify <id> shield pqeq <lambda>`
-      // on the solve side. Until this was hardcoded to 0.462770 here with NO keyword at all, so any deck
-      // that retuned λ on the fix was GUARANTEED force<->solve inconsistent with no way to fix it — the
-      // channel had no legal configuration. Only meaningful for `pqeq`; harmless (unread) otherwise.
+      // PQEq λ in α_i = λ/(2 Rc_i²). MIRRORS `fix_modify <id> shield pqeq <lambda>` on the solve side;
+      // a deck that retunes λ on the fix must set the same value here, or forces and solve disagree.
+      // Only meaningful for the Gaussian kernel; harmless (unread) otherwise.
       // Put `lambda <val>` BEFORE any `2s ...` (which consumes to the end of the command).
       if (k + 1 >= narg) error->all(FLERR, "pair_style coul/shield/intra lambda: need <value>");
       shield_lambda = utils::numeric(FLERR, arg[k+1], false, lmp);
@@ -235,10 +234,10 @@ void PairCoulShieldIntra::settings(int narg, char **arg)
       k++;
     }
     else if (strcmp(arg[k], "iondamp") == 0) {
-      // #5 damped interionic kernel: `iondamp <typeI> <typeJ> <b> [<n>]` -- TT-damp the shielded kernel for
+      // Damped interionic kernel: `iondamp <typeI> <typeJ> <b> [<n>]` -- TT-damp the shielded kernel for
       // the designated type pairs, MIRRORING `fix_modify <id> iondamp` (which owns the solve side; this owns
-      // forces/energy -- both must carry the same pairs/b/n)..
-      if (kokkosable)   // device pair hardcodes the undamped kernels (host-first precedent, like slater's guard)
+      // forces/energy -- both must carry the same pairs/b/n).
+      if (kokkosable)   // device pair hardcodes the undamped kernels (host-only, like slater's guard)
         error->all(FLERR, "pair coul/shield/intra iondamp is host-only (not ported to the /kk device pair)");
       if (k + 3 >= narg)
         error->all(FLERR, "pair_style coul/shield/intra iondamp: need <typeI> <typeJ> <b> [<n>]");
@@ -323,7 +322,7 @@ void PairCoulShieldIntra::init_style()
       error->all(FLERR, "Pair coul/shield/intra does not support Drude shells (`fix drude`)");
   if (!atom->q_flag) error->all(FLERR, "Pair coul/shield/intra requires atom attribute q");
   if (!atom->molecule_flag) error->all(FLERR, "Pair coul/shield/intra requires atom attribute molecule");
-  // s88b: the special_bonds guard moved to init_list(): LAMMPS decides whether a 0/0-weighted bonded pair is DROPPED
+  // The special_bonds guard lives in init_list(): LAMMPS decides whether a 0/0-weighted bonded pair is DROPPED
   // from the neighbor list (neighbor->special_flag[k] == 0) only in Neighbor::init(), which runs after this.
   if (shield_gauss == SHIELD_SLATER) build_slater_tables();   // lazily (re)built every init_style() call; see below
   neighbor->add_request(this);
@@ -357,12 +356,12 @@ void PairCoulShieldIntra::build_slater_tables()
 }
 
 /* ----------------------------------------------------------------------
-   s88b : the special_bonds and exclusion guards, checked where the
+   The special_bonds and exclusion guards, checked where the
    truth is known. LAMMPS removes a bonded 1-(k+1) pair from every neighbor list only when
    neighbor->special_flag[k] == 0: both weights exactly 0 AND no kspace style AND no special-keeping pair style
    (neighbor.cpp ~519-576; npair.h find_special). Under a kspace style the pairs are KEPT with factor_coul = 0 and this
-   style nets the full J_shield (coul/long nets 0), so nothing is missing -- the old init_style() test on the weights
-   refused such valid decks (every fix qeq/sam deck has kspace). special_flag is final only after Neighbor::init(),
+   style nets the full J_shield (coul/long nets 0), so nothing is missing and such decks are valid (every fix
+   qeq/sam deck has kspace); testing the weights in init_style() would refuse them. special_flag is final only after Neighbor::init(),
    which runs after init_style() and before this callback. Kokkos inherits this (no override there).
 -------------------------------------------------------------------------*/
 
@@ -377,16 +376,16 @@ void PairCoulShieldIntra::init_list(int id, NeighList *ptr)
                    "correction never sees them and the intramolecular Coulomb silently vanishes. Add a kspace_style"
                    "(the pairs are then kept with factor_coul 0 and the physics is complete), or give the hop a tiny"
                    "nonzero lj weight, e.g. `special_bonds lj 1e-8 1e-8 1e-8` with your coul weights", k+1);
-  // s88b (refuse `exclude molecule/intra` only): that exclusion removes exactly the intramolecular pairs
+  // Refuse `exclude molecule/intra` only: that exclusion removes exactly the intramolecular pairs
   // this style exists for, while kspace still sums them -- the shielded correction, coul/long's compensation and the
-  // qeq/sam solve coupling all vanish silently (measured 0.6 e charge errors, s88b B4). Other exclusions are left alone:
+  // qeq/sam solve coupling all vanish silently (charge errors of several tenths of e). Other exclusions are left alone:
   // fix gcmc / widom / charge/regulation add an internal group exclusion to switch trial molecules off, legitimately.
   for (int i = 0; i < neighbor->nex_mol; i++)
     if (neighbor->ex_mol_intra[i])
       error->all(FLERR, "Pair coul/shield/intra: neigh_modify exclude molecule/intra is active. It removes the"
                  "intramolecular pairs this style corrects while kspace still sums them, so the shielded correction,"
-                 "coul/long's compensation and the qeq/sam solve coupling vanish (measured 0.6 e charge errors,"
-                 "samQEq s88b). Remove it; keep molecules rigid with fix rigid/shake instead");
+                 "coul/long's compensation and the qeq/sam solve coupling vanish (charge errors of several tenths of e)."
+                 "Remove it; keep molecules rigid with fix rigid/shake instead");
 }
 
 /* ----------------------------------------------------------------------*/
@@ -398,7 +397,7 @@ double PairCoulShieldIntra::init_one(int i, int j)
     cut[i][j] = mix_distance(cut[i][i], cut[j][j]);
   }
   gamma[j][i] = gamma[i][j];
-  // #5 iondamp truncation hygiene: this pair truncates HARD at cut[i][j], and the damped correction
+  // iondamp truncation hygiene: this pair truncates HARD at cut[i][j], and the damped correction
   // f·J − 1/r ~ −(1−f(b r))/r has an exponential TT tail -- if 1−f(b·cut) is not tiny the truncation is a
   // kcal-scale energy step at the cutoff. Budget = the Ewald-tolerance scale (1e-3). Deck fix: raise the
   // damped pairs' per-pair cutoff to the fix's swb (e.g. `pair_coeff 3 4 coul/shield/intra 0.5 8.0`).
@@ -417,10 +416,9 @@ double PairCoulShieldIntra::init_one(int i, int j)
 void PairCoulShieldIntra::write_restart(FILE *fp)
 {
   write_restart_settings(fp);
-  // is2s (slater per-type 2s/1s flag): written ONLY when shield_gauss==SHIELD_SLATER, so an OLD-format
-  // restart file (shield_gauss 0 or 1, written before this mode existed) is read back byte-for-byte
-  // identically -- read_restart mirrors this same conditional, keyed off the shield_gauss value it JUST
-  // read from the (still-shared) settings block above.
+  // is2s (slater per-type 2s/1s flag): written ONLY when shield_gauss==SHIELD_SLATER, so a restart file
+  // with shield_gauss 0 or 1 carries no is2s block -- read_restart mirrors this same conditional, keyed off
+  // the shield_gauss value it JUST read from the (shared) settings block above.
   if (shield_gauss == SHIELD_SLATER)
     for (int i = 1; i <= atom->ntypes; i++) fwrite(&is2s[i], sizeof(int), 1, fp);
   for (int i = 1; i <= atom->ntypes; i++)
@@ -439,8 +437,8 @@ void PairCoulShieldIntra::read_restart(FILE *fp)
   int me = comm->me;
   // is2s is NOT part of allocate() (it's independent of gamma/cut/setflag -- see the header); (re)allocate it
   // here so a restart-restored pair (no settings() reissued) still has a valid array, then read it back ONLY
-  // if shield_gauss==SHIELD_SLATER (matches write_restart's same-conditional write, so old-format files with
-  // shield_gauss in {0,1} are read unchanged -- see the comment there).
+  // if shield_gauss==SHIELD_SLATER (matches write_restart's same-conditional write, so files with
+  // shield_gauss in {0,1} carry no is2s block -- see the comment there).
   memory->destroy(is2s);
   memory->create(is2s, atom->ntypes+1, "pair:is2s");
   for (int i = 0; i <= atom->ntypes; i++) is2s[i] = 0;
@@ -503,13 +501,13 @@ double PairCoulShieldIntra::single(int i, int j, int itype, int jtype, double rs
   }
   double r2inv = 1.0/rsq, rinv = sqrt(r2inv), r = 1.0/rinv;
   double K = force->qqrd2e * atom->q[i] * atom->q[j];   // full J_shield; only the −1/r tracks factor_coul (see compute)
-  if (iondamp_on && iondamp_b[itype][jtype] > 0.0) {    // #5 damped interionic kernel (mirrors compute())
+  if (iondamp_on && iondamp_b[itype][jtype] > 0.0) {    // damped interionic kernel (mirrors compute())
     double J, dJdr;
     if (shield_gauss == SHIELD_SLATER) {
       int idx = slater_tri_index(itype, jtype, atom->ntypes);
       J = slater_tabs[idx].eval(r, dJdr);
     } else if (shield_gauss == SHIELD_GAUSSIAN) {
-      double aij = pqeq_aij(itype, jtype);   // : per-pair override or the combination rule
+      double aij = pqeq_aij(itype, jtype);   // per-pair override or the combination rule
       J = erf(aij*r)*rinv;
       dJdr = (2.0*aij/MY_PIS)*exp(-aij*aij*rsq)*rinv - J*rinv;
     } else {
@@ -532,7 +530,7 @@ double PairCoulShieldIntra::single(int i, int j, int itype, int jtype, double rs
     return K * (J - factor_coul*rinv);
   }
   if (shield_gauss == SHIELD_GAUSSIAN) {
-    double aij = pqeq_aij(itype, jtype);   // : per-pair override or the combination rule
+    double aij = pqeq_aij(itype, jtype);   // per-pair override or the combination rule
     double erfar = erf(aij*r), expt = exp(-aij*aij*rsq), r3inv = rinv*r2inv;
     fforce = K * ((erfar - factor_coul)*r3inv - (2.0*aij/MY_PIS)*expt*r2inv);
     return K * (erfar - factor_coul) * rinv;
@@ -544,7 +542,7 @@ double PairCoulShieldIntra::single(int i, int j, int itype, int jtype, double rs
   return K * (sh - factor_coul*rinv);
 }
 
-/* option A: per-type-pair Gaussian radius override; pushed by FixQEqSam::push_shield_pairs() at init.*/
+/* Per-type-pair Gaussian radius override; pushed by FixQEqSam::push_shield_pairs() at init.*/
 void PairCoulShieldIntra::shield_rpair_set(int i, int j, double r)
 {
   const int np1 = atom->ntypes + 1;

@@ -1,5 +1,5 @@
 # Entropy (2PT/3PT) at the chosen LJ sigma=3.144, from the NPT-equilibrated restart.
-# Fresh NVE + fix xpt (dodges the reset_timestep / unfix-refix-rigid + pppm/samqeq segfault).
+# Fresh NVE + fix xpt from the restart.
 # S_q = .thermo column 2 (eV/K/molecule) * 96485 = J/mol/K.  Target band 63-65 J/mol/K.
 read_restart spcfq_s3144.restart
 group fq type 1 2

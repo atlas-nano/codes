@@ -1,9 +1,8 @@
-# Bit-test (, 2026-09-25): tip4pfq_gas with ACKS2 bond-softness (`bondsoft 1.0 2.0`: kappa 1.0, bcut 2.0 A), which
-# arms the inter-site kappa block, selects the MINRES saddle solver and the Gaussian taper H. No case covered it before
-# (uninit_reads_s86). tests/perturb.sh covers it at np 2.
-# Bit-test: TIP4P-FQ 4-site (M-site) single molecule, short-range gated solve.
-# Pins the 4-site augmented-X path (charge on H + massless M, oxygen excluded from
-# the fq group) — the TIP4P-FQ solver that the long-standing blocker lives in.
+# Bit-test: tip4pfq_gas with ACKS2 bond-softness (`bondsoft 1.0 2.0`: kappa 1.0, bcut 2.0 A), which
+# arms the inter-site kappa block, selects the MINRES saddle solver and the Gaussian taper H.
+# perturb.sh covers it at np 2.
+# System: TIP4P-FQ 4-site (M-site) single molecule, short-range solve, charge on H + massless M,
+# oxygen excluded from the fq group.
 units           metal
 atom_style      full
 boundary        f f f

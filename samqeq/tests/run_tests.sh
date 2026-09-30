@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# samQEq bit-correctness regression tests.
+# samQEq bit-correctness tests.
 #
 # Each cases/<name>/ holds a self-contained LAMMPS deck (in.lammps) plus its
 # .param/.mol inputs. The deck must write `charges.dump` (id type q) and may
@@ -40,11 +40,10 @@ for c in "${CASES[@]}"; do
   work="$(mktemp -d)"
   # copy ALL case input files (in.lammps, *.param, *.mol, data.*, etc.); cp (non-recursive) skips the golden/ dir
   cp "$dir"/* "$work"/ 2>/dev/null
-  # A case directory may carry a stale run artifact that was committed by accident. Copying it in
-  # makes the case UNFALSIFIABLE: LAMMPS can die before writing anything and the check below still
-  # finds a charges.dump -- the previous good run's -- and diffs it clean; two cases once passed
-  # that way. Delete the outputs in the work dir before running, so a
-  # charges.dump present afterwards can only be one this run produced.
+  # A stale output copied in with the inputs would make the case unfalsifiable: LAMMPS could die
+  # before writing anything and the check below would still find a charges.dump and diff it clean.
+  # Delete the outputs in the work dir before running, so a charges.dump present afterwards can
+  # only be one this run produced.
   rm -f "$work/charges.dump" "$work/pe.txt" "$work/log.lammps"
   ( cd "$work" && mpirun -np "$NP" "$LMP" -in in.lammps > run.log 2>&1 )
   rc=$?

@@ -1,18 +1,11 @@
-# #32 REGRESSION: build_molinv null-deref on a SECOND run's setup_pre_force.
+# build_molinv on a SECOND run's setup_pre_force.
 #
-# Bug (fixed by nmol_=0 in FixQEqSam::deallocate_storage): every `run` triggers
-# setup_pre_force -> deallocate_storage (frees+nulls molinv/molsum) -> pre_force
-# -> qeq_solve -> build_molinv. deallocate_storage used to free molinv/molsum
-# WITHOUT resetting nmol_, so on the SECOND run build_molinv saw nmol==nmol_,
-# skipped re-creating the arrays, and dereferenced the null molinv -> segfault.
-# The whole 15-case suite missed this because every other case does ONE run.
-#
-# This case does TWO runs with the mid-deck pattern that crashed in production
-# (reset_timestep + a freshly-added dump between them). lr_ewald=2 (pppm/samqeq)
-# is the path that owns qeq_solve/build_molinv. A small multi-molecule box makes
-# build_molinv do real per-molecule projector work (nmol > 2). Frozen (no time
-# integration) => fully deterministic, no dynamics blow-up. Pre-fix: SEGFAULT on
-# the second run. Post-fix: runs, charges reproduce byte-for-byte.
+# Every `run` triggers setup_pre_force -> deallocate_storage (frees+nulls molinv/molsum, resets
+# nmol_) -> pre_force -> qeq_solve -> build_molinv, which must re-create the arrays. This case does
+# TWO runs with a mid-deck reset_timestep + a freshly-added dump between them. lr_ewald=2
+# (pppm/samqeq) is the path that owns qeq_solve/build_molinv. A small multi-molecule box makes
+# build_molinv do real per-molecule projector work (nmol > 2). Frozen (no time integration) =>
+# fully deterministic. Both runs must complete and the charges reproduce byte-for-byte.
 units           metal
 atom_style      full
 boundary        p p p
@@ -39,7 +32,7 @@ thermo          1
 thermo_style    custom step pe
 # ---- first run: build_molinv created (nmol_ 0 -> nmol) ----
 run             0
-# ---- mid-deck change + SECOND run: the #32 trigger (setup_pre_force fires again) ----
+# ---- mid-deck change + SECOND run: setup_pre_force fires again ----
 reset_timestep  0
 dump            d all custom 5 dump.dummy id type x y z
 run             0

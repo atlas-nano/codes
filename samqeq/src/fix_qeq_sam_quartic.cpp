@@ -18,7 +18,7 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 
 /* ----------------------------------------------------------------------
-   (B) QUARTIC near-criticality cure: fill the per-atom solve diagonal eta_diag[i] from the LAGGED charge.
+   QUARTIC near-criticality cure: fill the per-atom solve diagonal eta_diag[i] from the LAGGED charge.
      eta_eff(q) = eta[type] + 1/6 c4 q^2 + 1/2 c q (atoms in quartic_groupbit), clamped >= quartic_etafloor;
      all other atoms keep the bare eta[type].
    Reproduces the true nonlinear on-site stationarity dE/dq = chi + eta_eff(q) q for
@@ -32,7 +32,7 @@ void FixQEqSam::apply_quartic_eta()
   double *qa = atom->q;
   const int nlocal = atom->nlocal;
   int nth = comm->nthreads;
-  // P1 : each i writes only its own eta_diag[i]; anh_secant_add (fix_qeq_sam.h) is a pure inline function
+  // OpenMP: each i writes only its own eta_diag[i]; anh_secant_add (fix_qeq_sam.h) is a pure inline function
   // (its `e` accumulator is this call's own local reference) -- embarrassingly parallel, no race, no reduction.
 #if defined(_OPENMP)
   if (omp_go(nth, nlocal)) {
@@ -55,7 +55,7 @@ void FixQEqSam::apply_quartic_eta()
     double e = eta0 ? eta0[t] : eta[t];
     const double qi = qa[i];
     // staircase + global gated quartic SECANT (dE_anh/dq)/q: the shared on-site anharmonic model
-    // (fix_qeq_sam.h, Tier-A #1) — same E(q) as compute_scalar/xl_chargeforce, factored so that
+    // (fix_qeq_sam.h) — same E(q) as compute_scalar/xl_chargeforce, factored so that
     // dE/dq − χ = q·eta_eff under the Picard iteration (q-only ⇒ variational, no position-force term).
     const bool anh = anh_secant_add(e, qi, t, mask[i] & quartic_groupbit, quartic_gate[i]);
     // The floor bounds the TOTAL solve diagonal solve_diag_of = e + (eta[t] - eta0[t]), as the saddle path does

@@ -2,7 +2,7 @@
    compute dipole/samqeq — total + per-molecule dipole for samQEq/samQEq.
 
    Usage: compute ID group-ID dipole/samqeq [debye]
-     scalar = mean per-molecule |dipole|, in DEBYE (the FQ headline number; molecule-ID 0 EXCLUDED, see B8)
+     scalar = mean per-molecule |dipole|, in DEBYE (the FQ headline number; molecule-ID 0 EXCLUDED, see below)
      vector[0-2]= total dipole (Σ q_i r_i, unwrapped), e·Å (or Debye with the "debye" keyword)
      vector[3] = |total dipole|, e·Å (or Debye)
      vector[4] = mean per-molecule |dipole|, DEBYE (== scalar; always Debye)
@@ -10,12 +10,12 @@
    Charges are the live atom->q solved by fix qeq/sam. Per-molecule dipoles
    use unwrapped coords and are origin-independent for neutral molecules
    (samQEq enforces per-molecule neutrality).
-   B8: molecule-ID 0 (the pooled non-molecular fragment -- bare ions, electrode atoms in atom_style
+   Molecule-ID 0 (the pooled non-molecular fragment -- bare ions, electrode atoms in atom_style
    full/molecular with no real bond topology) is EXCLUDED from the per-molecule mean |dipole| (scalar,
-   vector[4]) -- lumping unrelated atoms into one fake "molecule" produced an arbitrary-origin, physically
-   meaningless number there. It still contributes to the system TOTAL dipole (vector[0-3]). Any molecule
+   vector[4]) -- lumping unrelated atoms into one fake "molecule" gives an arbitrary-origin, physically
+   meaningless number. It still contributes to the system TOTAL dipole (vector[0-3]). Any molecule
    (including the mol-0 pool) that ends up with a nonzero net charge has an origin/unwrap-convention-dependent
-   dipole; this is now flagged with a one-time warning instead of silently reported.
+   dipole; this is flagged with a one-time warning.
 -------------------------------------------------------------------------*/
 
 #include "compute_dipole_samqeq.h"
@@ -29,13 +29,12 @@
 #include <cmath>
 #include <cstring>
 
-// B8: molecule-ID-0 pools every non-molecular atom (bare ions, electrode atoms in atom_style full/molecular
+// Molecule-ID 0 pools every non-molecular atom (bare ions, electrode atoms in atom_style full/molecular
 // with no real bond topology) into one fake "molecule". Its "dipole" is an artifact of that pooling -- an
 // arbitrary-origin sum over physically unrelated atoms -- so it must not pollute the headline mean-|dipole|
 // scalar. Also: a molecule (any molecule id, incl. the mol-0 pool) that carries a nonzero net charge has an
 // unwrap-image-convention-dependent (not physically intrinsic) dipole; warn once, not silently.
-// `warned_nonneutral_mol` is a translation-unit-local flag (not a class member, so this compute's header does
-// not need editing) -- it is process-lifetime, so it fires once per LAMMPS run even across multiple
+// `warned_nonneutral_mol` is a translation-unit-local flag, not a class member -- it is process-lifetime, so it fires once per LAMMPS run even across multiple
 // `compute .../dipole` instances (a reasonable trade-off for a diagnostic notice, not a physics-affecting
 // quantity).
 namespace {
@@ -121,7 +120,7 @@ void ComputeDipoleSamQEq::compute_vector()
   for (bigint m = 0; m < 3 * nmol; m++) moldip[m] = 0.0;
   for (bigint m = 0; m < nmol; m++) molcnt[m] = 0.0;
 
-  // B8: per-molecule NET CHARGE (local scratch, not a persistent member -- see the file-scope comment above;
+  // Per-molecule NET CHARGE (local scratch, not a persistent member -- see the file-scope comment above;
   // compute_vector runs at most once/timestep, so a fresh nmol-sized buffer here is cheap next to the
   // existing moldip/molcnt Allreduce of the same size).
   double *molq = new double[nmol]();
@@ -155,7 +154,7 @@ void ComputeDipoleSamQEq::compute_vector()
       // (a) mol==0 is the pooled non-molecular fragment (see the file-scope comment) -- excluded from the
       // per-molecule mean |dipole| headline stat (the FQ-water number this compute exists for). It still
       // contributes to the system TOTAL dipole above (a legitimate, if origin-dependent-for-a-charged-
-      // system, Sigma q_i r_i quantity, unchanged from before this fix).
+      // system, Sigma q_i r_i quantity).
       if (m != 0) { permol_sum += sqrt(dx * dx + dy * dy + dz * dz); npop++; }
       // (b) any molecule (incl. the mol-0 pool) with a nonzero net charge has an origin/unwrap-convention-
       // dependent dipole -- flag it once instead of silently reporting a convention-dependent number.

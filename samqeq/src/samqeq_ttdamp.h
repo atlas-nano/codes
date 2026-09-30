@@ -8,16 +8,16 @@
    Applied MULTIPLICATIVELY to the active shielded Coulomb kernel J(r)
    (cbrt/pqeq/slater) for DESIGNATED ion type pairs only: J_damp = f_n·J.
    f→1 at large r (the Ewald 1/r complement is untouched); f→0 at contact
-   (quenches the contact charge-transfer coupling that drives the Zn–Cl
-   qZn→+4/qCl→−2 FQ sloshing pathology).
+   (quenches the contact charge-transfer coupling that otherwise drives
+   runaway FQ charge sloshing between contact ion pairs, e.g. Zn–Cl).
 
    Shared, header-only, included by BOTH FixQEqSam (solve side) and
    PairCoulShieldIntra (force/energy side) so there is exactly ONE
-   transcription — force↔solve consistency by construction (the
-   slater_jtable.h precedent).
+   transcription — force↔solve consistency by construction (as in
+   slater_jtable.h).
 
-   UNITS: x is dimensionless (b is a length⁻¹, NO ev_scale — A7 same family
-   as the Slater zeta); f is a pure factor on the raw 1/Angstrom kernel.
+   UNITS: x is dimensionless (b is a length⁻¹, NO ev_scale, like the
+   Slater zeta); f is a pure factor on the raw 1/Angstrom kernel.
 -------------------------------------------------------------------------*/
 
 #ifndef LMP_SAMQEQ_TTDAMP_H

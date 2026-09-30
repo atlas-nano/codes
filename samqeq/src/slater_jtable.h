@@ -17,9 +17,9 @@
    implementation to keep in sync.
 
    UNITS: slater_jraw returns the RAW value in 1/Angstrom (same convention as
-   the existing cbrt/erf shielded kernels) -- the caller multiplies by
+   the cbrt/erf shielded kernels) -- the caller multiplies by
    force->qqrd2e to get energy in the deck's native units (eV in metal, kcal/mol
-   in real; A7). zeta is a length^-1 (1/Angstrom) -- NO ev_scale involved.
+   in real). zeta is a length^-1 (1/Angstrom) -- NO ev_scale involved.
 -------------------------------------------------------------------------*/
 
 #ifndef LMP_SLATER_JTABLE_H

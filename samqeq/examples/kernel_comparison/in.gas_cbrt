@@ -1,12 +1,9 @@
-# Gas-phase sanity check for the Slater-overlap kernel port: single isolated molecule, run 0, check the
-# SCF-solved dipole against Rick's gas value mu~1.85 D -- WITH NO KERNEL REFIT (unlike in.gas_sanity's
-# cbrt fit or in.tip4pfq_gasref's pqeq fit, both pinned to the two rigid intramolecular distances). The
-# Slater kernel is Rick's OWN J(r) (jrab.py/mdtpn.f), so his RAW zeta parameters port directly.
-# Mirrors in.gas_sanity exactly (same geometry/masses/atom ordering/molecule file), swapped to
-# `fix_modify chg shield slater 2s 1 3` (types 1=O, 3=M share the oxygen 2s form factor) with
-# water4_gas_slater.param (gamma column = zeta, RAW 1/Angstrom -- see that file's header comment).
-# lr_alpha defaults to 0 (legacy path) -> exercises FixQEqBaseSam::compute_H via the calc_Hval override
-# (samQEq  item 3), NOT shielded_coulomb() (that needs lr_ewald>=2).
+# The same single isolated TIP4P-FQ molecule, geometry and parameter file as in.gas_slater, solved under
+# the cube-root kernel (`fix_modify chg shield cbrt`) for comparison: run 0, SCF-solved dipole.
+# water4_gas_slater.param carries the RAW zeta
+# parameters (gamma column = zeta, 1/Angstrom -- see that file's header comment). lr_alpha defaults to 0
+# (short-range path) -> exercises FixQEqBaseSam::compute_H via the calc_Hval override, NOT
+# shielded_coulomb() (that needs lr_ewald>=2).
 units           metal
 atom_style      full
 boundary        f f f

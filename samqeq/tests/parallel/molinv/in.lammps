@@ -1,15 +1,13 @@
-# adjudication deck = the repro kit deck (tests/repro_molinv_deadlock/in.lammps, physics
-# lines verbatim) with three additions that the kit deck lacks:
+# Multi-rank build_molinv check: a dense SPC-FQ region on rank 0 and a stream of molecules from rank 1 make
+# one rank's atom storage regrow at an exchange, so the ranks disagree on the molinv cache verdict.
 #   1. mode gen : write the np1-built configuration (write_data) and quit; mode run with cfg=<file>
 #      read_data's that SAME configuration at every rank count. Needed because `create_atoms ... mol`
-#      seeds molecule orientations with seed+comm->me and numbers atoms rank by rank, so the kit deck's
-#      configuration itself depends on np and a per-atom np-N vs np-1 charge comparison is meaningless.
+#      seeds molecule orientations with seed+comm->me and numbers atoms rank by rank, so a created
+#      configuration depends on np and a per-atom np-N vs np-1 charge comparison is meaningless.
 #   2. processors ${px} ${py} ${pz} and a y,z extent knob ${vyz}: with 2 2 1 / 2 2 2 the x split stays at
-#      Lx/2 (the kit's np2 geometry) and the dense/stream payload is shared by symmetric y(,z) halves, so
-#      the log's Nlocal/Nghost max is the dense-rank total and vyz retunes it to sit just under a 16384
-#      multiple at np4/np8 (the kit is tuned for np2 only).
+#      Lx/2 and the dense/stream payload is shared by symmetric y(,z) halves, so the log's Nlocal/Nghost
+#      max is the dense-rank total and vyz tunes it to sit just under a 16384 multiple at np4/np8.
 #   3. charge dumps at step 0 (after `run 0`) and at the end, and a PE thermo column, for the comparison.
-# Trigger mechanism and PRE/POST-fix signatures: see the kit deck header and README.
 
 variable        nsteps index 600
 variable        vdense index 16.5
@@ -52,9 +50,9 @@ pair_coeff      * * coul/long
 pair_coeff      * * coul/shield/intra 1.11
 kspace_style    pppm/samqeq 1.0e-6
 neighbor        1.0 bin
-# : randomly oriented waters on a 3.1 A lattice can put two H's < 1 A apart; such a pair launches its rigid
-# bodies > 11 A in a few fs and rigid/small aborts ("Rigid body atoms ... missing"). The kit's np2 seeds happen
-# to survive; other seeds/extents do not. Drop the overlapping molecules from a freshly created configuration.
+# Randomly oriented waters on a 3.1 A lattice can put two H's < 1 A apart; such a pair launches its rigid
+# bodies > 11 A in a few fs and rigid/small aborts ("Rigid body atoms ... missing"). Drop the overlapping
+# molecules from a freshly created configuration.
 neigh_modify    exclude molecule/intra all   # the overlap test must see INTERmolecular pairs only (O-H is 1.0 A)
 if "${usecfg} == 0" then "delete_atoms    overlap 1.5 all all mol yes"
 neigh_modify    exclude none

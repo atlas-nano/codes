@@ -1,15 +1,9 @@
-# Bit-correctness: block-ILUT saddle preconditioner with a PARTIAL fix group.
+# Bit-correctness: block-ILUT saddle preconditioner with a PARTIAL fix group
+# (`fix beq sub`, so the single type-1 molecule atom sits OUTSIDE the qeq group).
 #
-# This is the case that would have caught the segfault. It is the metal_ilu deck with ONE change
-# -- `fix beq all` -> `fix beq sub`, so the single type-1 molecule atom sits OUTSIDE the qeq group.
-#
-# WHY IT MATTERS: compute_H and compute_X fill H/X firstnbr/numnbrs only for group rows, and
-# allocate_matrix uses memory->create (malloc, not calloc). Before the fix, ilu_build() walked those
-# arrays for EVERY local atom, so a non-group atom sent it into uninitialised heap -- SIGSEGV, or on
-# a lucky heap a silently polluted factor. Every existing ILU deck used group == all, so the whole
-# suite was blind to it; the gated-Drude melt (group = CORES, 1680 shells outside) is what exposed it.
-#
-# Pre-fix this deck segfaults. Post-fix it must produce finite, locked charges.
+# compute_H and compute_X fill H/X firstnbr/numnbrs only for group rows, and allocate_matrix uses
+# memory->create (malloc, not calloc), so ilu_build() must walk group rows only; a non-group row
+# would read uninitialised heap. This deck must produce finite, locked charges.
 units           metal
 atom_style      full
 boundary        f f f

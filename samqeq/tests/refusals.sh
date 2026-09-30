@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# samQEq refusal tests . run_tests.sh diffs numbers and has no way to expect an error; this script does.
+# samQEq refusal tests. run_tests.sh diffs numbers and has no way to expect an error; this script does.
 #
 # For every cases/<name>/in.refuse_* deck:
 #   - a deck with a line `# EXPECT: <string>` PASSes only if LAMMPS exits NON-zero AND <string> is in its output
 #     (the refusal fired, for the stated reason);
 #   - a deck with a line `# EXPECT_OK` is the positive control (the way out the refusal names): it PASSes only if
 #     LAMMPS exits 0 AND writes charges.dump.
-# For every cases/<name>/in.warn_* deck (, row 121 -- warnings, not refusals):
+# For every cases/<name>/in.warn_* deck (warnings, not refusals):
 #   - `# EXPECT_WARN: <string>` PASSes only if LAMMPS exits 0, writes charges.dump AND prints `WARNING: <string>`;
 #   - `# EXPECT_NOWARN: <string>` is the negative control: same, but that warning must be ABSENT.
 #   (`WARNING: ` is prepended to the grep so the deck's own comment line can never satisfy it.)

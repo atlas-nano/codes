@@ -1,8 +1,7 @@
 /* ----------------------------------------------------------------------
-   pppm/samqeq/kk — device reciprocal-space potential for fix qeq/sam (Phase 3).
+   pppm/samqeq/kk — device reciprocal-space potential for fix qeq/sam.
    Subclass of PPPMKokkos: reuse the device FFT/grid/greensfn/particle_map; add a
    group-masked make_rho + a u_brick potential projection + a small ad-poisson.
-   DRAFT-1 (session 18) — written from the recon map; expect a build-fix round.
    Mirrors the CPU PPPMSamqeq::compute_vector exactly (same masking + ad-poisson).
 -------------------------------------------------------------------------*/
 
@@ -10,7 +9,7 @@
 
 #include "atom_kokkos.h"
 #include "atom_masks.h"
-#include "comm.h"       // comm->me (the #29 stage diagnostic prints on rank 0 only)
+#include "comm.h"       // comm->me (the stage diagnostic prints on rank 0 only)
 #include "domain.h"
 #include "error.h"
 #include "fft3d_kokkos.h"
@@ -19,7 +18,7 @@
 #include "kokkos.h"
 #include "update.h"
 
-#include "utils.h"     // utils::logmesg for the #29 stage diagnostic
+#include "utils.h"     // utils::logmesg for the stage diagnostic
 
 #include "platform.h"   // platform::walltime for the reciprocal sub-phase timers
 
@@ -29,12 +28,11 @@
 using namespace LAMMPS_NS;
 
 // grid-comm flags: use KSpace's own enumerators, qualified. In a class template, unqualified lookup
-// does not see the dependent base's names, so a file-level enum silently wins -- and a file-level
+// does not see the dependent base's names, so a file-level enum would silently win -- and a file-level
 // FORWARD_AD = 1 collides with KSpace::FORWARD_IK = 1 (kspace.h numbers FORWARD_RHO first), which is
-// the flag PPPMKokkos forwards the ik E-field bricks with. The override below then packed u_brick in
-// place of the field and the E-field ghost cells were never filled (wrong reciprocal forces within
-// ~2 grid cells of every subdomain face; energies and charges unaffected). PPPMKokkos never uses
-// FORWARD_AD itself, so it is free for the u_brick exchange.
+// the flag PPPMKokkos forwards the ik E-field bricks with. The override below would then pack u_brick
+// in place of the field and leave the E-field ghost cells unfilled (wrong reciprocal forces near every
+// subdomain face). PPPMKokkos never uses FORWARD_AD itself, so it is free for the u_brick exchange.
 
 /* ----------------------------------------------------------------------*/
 
@@ -53,19 +51,15 @@ PPPMSamqeqKokkos<DeviceType>::~PPPMSamqeqKokkos()
 }
 
 /* ----------------------------------------------------------------------
-   ★ RUN-BOUNDARY FIX (, device mirror of PPPMSamqeq::init(), pppm_samqeq.cpp): PPPMKokkos::init()
+   ★ RUN BOUNDARY (device mirror of PPPMSamqeq::init(), pppm_samqeq.cpp): PPPMKokkos::init()
    (called at EVERY `run` command, same as the host PPPM::init()) deallocates + reallocates all device
-   grid Views, and greensfn, the fk arrays, and vg are only recomputed by setup() (Verlet::setup runs it AFTER the fix's
-   setup_pre_force). start_compute_device()'s self-heal sentinel (`sam_compute_step == -1`) was only set
-   in the CONSTRUCTOR, so it only ever detected the very FIRST setup of the process -- on a 2nd+ run
-   whose boundary solve is allowed to proceed (the `reset_timestep 0` production idiom, where
-   ntimestep==0 masquerades as a fresh first setup and defeats the #9 boundary skip AND leaves
-   sam_compute_step at the last step of the previous run, > ntimestep), compute_vector_device would run
-   the ENTIRE boundary charge solve against an invalid/zeroed device greensfn -> the same near-indefinite
-   operator / CG-stall / crash-lottery failure gdb-verified on the host path. init() is precisely the point where the grid is invalidated,
-   so re-arm the sentinel here: the next compute_vector_device call self-heals via setup(). Byte-identical
-   for single-run decks (constructor already set -1); multi-run decks get one redundant-but-identical
-   setup() per run.
+   grid Views, and greensfn, the fk arrays, and vg are only recomputed by setup() (Verlet::setup runs it
+   AFTER the fix's setup_pre_force). A second run whose boundary solve proceeds (e.g. after
+   `reset_timestep 0`) would otherwise run the whole boundary charge solve against an invalid/zeroed
+   device greensfn. init() is precisely the point where the grid is invalidated, so re-arm the
+   start_compute_device() sentinel (`sam_compute_step = -1`) here: the next compute_vector_device call
+   self-heals via setup(). Single-run decks are unaffected (the constructor sets -1); multi-run decks
+   get one redundant-but-identical setup() per run.
 -------------------------------------------------------------------------*/
 
 template<class DeviceType>
@@ -87,15 +81,14 @@ void PPPMSamqeqKokkos<DeviceType>::init()
 
 /* ----------------------------------------------------------------------
    reciprocal energy/forces with qsqsum refreshed from the LIVE charges — the
-   device analog of the #10 fix in pppm_samqeq.cpp (PPPMSamqeq::compute(), CPU
-   side). This class subclasses PPPMKokkos directly (not PPPMSamqeq), so it does
-   NOT inherit that override: PPPMKokkos<DeviceType>::compute() only re-measures
-   qsum/qsqsum when the atom COUNT changes (pppm_kokkos.cpp), which is valid for
-   fixed point charges but stale for fix qeq/sam's per-step fluctuating charges,
-   biasing the reported reciprocal self-energy exactly like the pre-#10 CPU bug
-   (see pppm_samqeq.cpp:212-224 for the full derivation; same reasoning applies
-   here — the term is position-independent, so this is an energy-only fix, no
-   force/dynamics impact).
+   device analog of PPPMSamqeq::compute() in pppm_samqeq.cpp. This class
+   subclasses PPPMKokkos directly (not PPPMSamqeq), so it does NOT inherit that
+   override: PPPMKokkos<DeviceType>::compute() only re-measures qsum/qsqsum when
+   the atom COUNT changes (pppm_kokkos.cpp), which is valid for fixed point
+   charges but stale for fix qeq/sam's per-step fluctuating charges, and would
+   bias the reported reciprocal self-energy (see PPPMSamqeq::compute() for the
+   derivation; the term is position-independent, so this affects the energy
+   only, not forces or dynamics).
    qsum_qsq() (KSpace base, kspace.cpp) reads the raw HOST atom->q pointer and is
    not Kokkos-aware, so pull q to the host first. This mirrors the explicit
    sync dance compute_vector_device() below does for x: under devsolve, device q
@@ -109,7 +102,7 @@ void PPPMSamqeqKokkos<DeviceType>::compute(int eflag, int vflag)
   AtomKokkos *atomKK = (AtomKokkos *) this->atom;
   atomKK->sync(Host, Q_MASK);                        // qsum_qsq() reads atom->q on the host directly
   this->qsum_qsq(0);                                 // re-measure qsum/qsqsum from the current (solved) charges
-  PPPMKokkos<DeviceType>::compute(eflag, vflag);      // stock device reciprocal solve; now uses fresh qsqsum
+  PPPMKokkos<DeviceType>::compute(eflag, vflag);      // stock device reciprocal solve, with the fresh qsqsum
 }
 
 /* ----------------------------------------------------------------------
@@ -129,24 +122,19 @@ void PPPMSamqeqKokkos<DeviceType>::allocate()
   d_electrolyte_density_brick = typename FFT_AT::t_FFT_SCALAR_3d("pppm/samqeq:e_density_brick", e0, e1, e2);
   d_electrolyte_density_fft = typename FFT_AT::t_FFT_SCALAR_1d("pppm/samqeq:e_density_fft",
                                                               this->d_density_fft.extent(0));
-  // ★ (#29) BUG FIX: this used to be `if (d_u_brick.extent(0) == 0)`, i.e. "allocate only if it
-  // has never been allocated". u_brick is OURS to size (the ik scheme allocates it only for peratom
-  // output), and the PPPM grid is re-derived at EVERY run start from qsum_qsq -- with fluctuating FQ
-  // charges the auto-tuned mesh really does change between runs. When it GREW, the base reallocated
-  // d_density_brick at the new size while u_brick silently kept the OLD, SMALLER one, and the whole
-  // pipeline (Work2ToU write, ProjectPsi read, the ghost pack/unpack) then indexed past its end:
-  // out of bounds, no bounds checking in a release Kokkos build, results wrong and not reproducible
-  // between identical runs. Measured: a deck whose mesh is pinned is idempotent across repeated
-  // `run 0`s (-0.4754136 every time) while the same deck with the auto mesh drifted
-  // -0.4754136 -> -0.48996403 -> -0.48880228. Size on the EXTENTS, never on emptiness.
+  // ★ u_brick is OURS to size (the ik scheme allocates it only for peratom output), and the PPPM grid
+  // is re-derived at EVERY run start from qsum_qsq -- with fluctuating FQ charges the auto-tuned mesh
+  // can change between runs. If u_brick kept an older, smaller size while the base reallocated
+  // d_density_brick, the pipeline (Work2ToU write, ProjectPsi read, the ghost pack/unpack) would index
+  // past its end, unchecked in a release Kokkos build. Size on the EXTENTS, never on emptiness.
   if ((int) this->d_u_brick.extent(0) != e0 || (int) this->d_u_brick.extent(1) != e1 ||
       (int) this->d_u_brick.extent(2) != e2)
     this->d_u_brick = typename FFT_AT::t_FFT_SCALAR_3d("pppm/samqeq:u_brick", e0, e1, e2);
-  // ★ (row 183): the BASE allocate() above just re-created d_rho1d as a fresh ZERO View
+  // ★ the BASE allocate() above just re-created d_rho1d as a fresh ZERO View
   // (pppm_kokkos.cpp allocate(): `d_rho1d = t_FFT_SCALAR_2d_3("pppm:rho1d", nmax, ...)`), and init() calls
   // allocate() at EVERY `run`/`minimize`. Re-arm the position-cache stamp HERE, at the re-creation point, so
   // no caller (init(), a future setup_grid()/fix balance path) can inherit a "current" stamp over an empty
-  // weight table. init() re-arms too ; this one is the structural guarantee.
+  // weight table. init() re-arms too; this one is the structural guarantee.
   sam_compute_step = -1;
 }
 
@@ -185,9 +173,8 @@ void PPPMSamqeqKokkos<DeviceType>::start_compute_device()
     }
     // electrolyte density Views + u_brick (the ik scheme leaves u_brick unallocated), keyed off the
     // now-allocated base d_density_brick so we don't depend on allocate() timing.
-    // ★ (#29): these tests are on the EXTENTS, not on emptiness — see the allocate() comment. The
-    // old `extent(0) == 0` form made the whole block a one-shot, so a grid that grew after the first
-    // call left every one of these views undersized and the pipeline wrote past their ends.
+    // ★ these tests are on the EXTENTS, not on emptiness — see the allocate() comment: a grid that
+    // grows after the first call must resize every one of these views.
     {
       const int e0 = this->d_density_brick.extent(0), e1 = this->d_density_brick.extent(1),
                 e2 = this->d_density_brick.extent(2);
@@ -203,22 +190,15 @@ void PPPMSamqeqKokkos<DeviceType>::start_compute_device()
         this->d_u_brick = typename FFT_AT::t_FFT_SCALAR_3d("pppm/samqeq:u_brick", e0, e1, e2);
     }
     this->particle_map();   // device functor TagPPPM_particle_map -> d_part2grid
-    // ★★ (row 183) THE SECOND-RUN DEFECT (, TASKS 183).
-    // The rho1d weights used to be filled in compute_vector_device under their OWN stamp
-    // (`rho1d_step != ntimestep`, #30). PPPMKokkos::init() -- every `run`/`minimize` -- calls allocate(),
-    // whose BASE re-creates d_rho1d as a fresh ZERO View, but rho1d_step kept the last step's value. A second
-    // run whose setup solve happens at the SAME ntimestep as the previous device call (`run 0` twice,
-    // `run 0` then `run N`, `run 0; reset_timestep 0; run`, a 0-iteration minimize then `run`; the setup
-    // re-solve only happens at ntimestep == 0, fix_qeq_sam.cpp setup_resolve) therefore skipped the fill and
-    // deposited NOTHING: rho_fft = 0, u = 0, psi = 0 on EVERY call of that setup solve (SAMQEQ_KKSP_DIAG).
-    // The calibration then measured recip_self = erf(aR)/R of the probe pair EXACTLY (0.28070 =
-    // erf(0.3*2.6019)/2.6019 on gself_cluster_energy vs 0.33830 correct; 0.35420 on recalib_on_grid_change, the
-    // 3.95 % refusal), and the setup solve ran with no reciprocal at all (mesh pinned, no recalibration, no
-    // guard: pe -5.5428 vs -6.2811). The host PPPMSamqeq computes rho1d inside make_rho and never had a stamp,
-    // so host and device disagreed silently. The weights are position-derived exactly like d_part2grid (same
-    // x, boxlo, delxinv, shift, order), so they belong under the SAME stamp: fill them here, right after the
-    // map, and every re-arm of sam_compute_step (init(), allocate()) refreshes both.
-    // The once-per-step saving is kept.
+    // ★★ The rho1d weights are filled HERE, under the same stamp as d_part2grid, never under a stamp of
+    // their own. PPPMKokkos::init() -- every `run`/`minimize` -- calls allocate(), whose BASE re-creates
+    // d_rho1d as a fresh ZERO View. A separate weights stamp would survive that, so a second run whose
+    // setup solve happens at the SAME ntimestep as the previous device call (`run 0` twice, `run 0` then
+    // `run N`, `run 0; reset_timestep 0; run`, a 0-iteration minimize then `run`) would skip the fill and
+    // deposit NOTHING: the recip_self calibration and the setup solve would see no reciprocal at all.
+    // The weights are position-derived exactly like d_part2grid (same x, boxlo, delxinv, shift, order),
+    // so they belong under the SAME stamp: fill them here, right after the map, and every re-arm of
+    // sam_compute_step (init(), allocate()) refreshes both. They are still computed once per step.
     this->copymode = 1;
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagSamqeqRho1d>(0, this->nlocal), *this);
     this->copymode = 0;
@@ -237,47 +217,39 @@ void PPPMSamqeqKokkos<DeviceType>::compute_vector_device(typename AT::t_kkfloat_
 {
   AtomKokkos *atomKK = (AtomKokkos *) this->atom;
 
-  // (#29) stage diagnostic — see the header. One integer test per call when unset.
+  // stage diagnostic — see the header. One integer test per call when unset.
   if (sam_diag_left < 0) {
     const char *e = getenv("SAMQEQ_KKSP_DIAG");
     sam_diag_left = e ? atoi(e) : 0;
   }
   const bool diag = (sam_diag_left > 0 && this->comm->me == 0);
   const int mapped_this_call = (sam_compute_step < (int) this->update->ntimestep) ? 1 : 0;
-  // #29 probe: sum|q| as the HOST holds it ON ENTRY — i.e. the trial charges the caller just staged
-  // — measured BEFORE the sync dance below, versus what the DEVICE ends up with after it.
+  // probe: sum|q| as the HOST holds it ON ENTRY — i.e. the trial charges the caller just staged
+  // — taken BEFORE the sync dance below, versus what the DEVICE ends up with after it.
   double q_host_in = 0.0, q_dev_in = 0.0;
   if (diag) { double *qh = this->atom->q; for (int i = 0; i < atomKK->nlocal; i++) q_host_in += fabs(qh[i]); }
 
-  // ★ CUDA dynamics fix: particle_map() maps atom positions to the FFT grid and reads the DEVICE x.
+  // ★ particle_map() maps atom positions to the FFT grid and reads the DEVICE x.
   // The host charge-solve path (FixQEqSamKokkos::sync_before_solve) pulls atom data to the HOST each
   // step, so a plain flag-respecting sync<Device>(X) here can leave the device x stale -> particle_map
-  // maps garbage -> "Out of range atoms - cannot compute PPPM" at the first dynamics step. (Invisible
-  // under Kokkos Serial, where host==device.) Force the CANONICAL x into BOTH spaces: pull to host
+  // maps garbage -> "Out of range atoms - cannot compute PPPM". (Invisible under Kokkos Serial, where
+  // host==device.) Force the CANONICAL x into BOTH spaces: pull to host
   // (no-op if host is already canonical), mark host as the source, then push to device.
   const auto space = ExecutionSpaceFromDevice<DeviceType>::space;
   atomKK->sync(Host, X_MASK);
   atomKK->modified(Host, X_MASK);
-  // ★★★ (#29) THE DEFECT — the reason every `-sf kk` production run gave wrong charges.
-  // q used to get a plain flag-respecting sync here, and the flags cannot see what actually happens:
-  // EVERY caller stages TRIAL charges into the host atom->q through a RAW POINTER — FixQEqSam::
-  // add_reciprocal (the charge-solve matvec), calibrate_recip_self_probes, field_diag, and
-  // FixQEqSamKokkos::device_add_reciprocal — and a raw write is invisible to Kokkos, so k_q is never
-  // marked host-modified and the push is skipped after the first one of the timestep.
-  // MEASURED (SAMQEQ_KKSP_DIAG, frozen-atom deck): within ONE timestep the host charges varied per
-  // matvec (sum|q| = 153.0, 0.0, 250.9, 57.7, 482.2, ...) while the DEVICE stayed pinned at the first
-  // call's 153.0. Every matvec therefore returned the SAME reciprocal potential, which makes the CG
-  // operator AFFINE instead of linear: it stalls at resid/b ~5e-3 and charges blow up to ±3.5 e, while
-  // total charge AND per-molecule nets stay perfect (the projector is fine) — the combination that
-  // made this look like a solver or shielding-kernel problem for months. Step 0 looked exact only
-  // because the first push of a step is the one that does happen.
-  // Host q is canonical HERE BY CONSTRUCTION (every entry point stages it), so declare it and push.
-  // ⚠ If an all-device path ever stages trial charges into the DEVICE q instead, it must mark
-  // modified(Device, Q_MASK) and this line must become conditional; no caller does that today.
-  // (#30): when the caller stages trial charges into the DEVICE q (the all-device reciprocal in
-  // FixQEqSamKokkos::device_add_reciprocal) it is canonical and we must keep our hands off — pushing
-  // the host's physical charges over it is #29 in mirror image, and is exactly what killed the first
-  // attempt at this path ("the bespoke device-q stash produced a wrong reciprocal", 3b-DIAG 0.42).
+  // ★★★ q must NOT get a plain flag-respecting sync here: the flags cannot see what actually happens.
+  // Host-staged callers write TRIAL charges into the host atom->q through a RAW POINTER — FixQEqSam::
+  // add_reciprocal (the charge-solve matvec), calibrate_recip_self_probes, field_diag, and the host
+  // branch of FixQEqSamKokkos::device_add_reciprocal — and a raw write is invisible to Kokkos, so k_q
+  // would never be marked host-modified and the push would be skipped after the first one of the
+  // timestep. Every matvec would then return the SAME reciprocal potential, making the CG operator
+  // AFFINE instead of linear (the solve stalls and charges diverge while total and per-molecule
+  // charges stay exact).
+  // In that case host q is canonical HERE BY CONSTRUCTION (every entry point stages it), so declare it
+  // and push. When the caller stages trial charges into the DEVICE q instead (q_on_device: the
+  // all-device reciprocal in FixQEqSamKokkos::device_add_reciprocal), the device copy is canonical and
+  // must not be touched: pushing the host's physical charges over it gives the wrong reciprocal.
   if (!q_on_device) atomKK->modified(Host, Q_MASK);
   atomKK->sync(space, X_MASK | (q_on_device ? 0 : Q_MASK) | MASK_MASK);
   this->x = atomKK->k_x.template view<DeviceType>();
@@ -304,7 +276,7 @@ void PPPMSamqeqKokkos<DeviceType>::compute_vector_device(typename AT::t_kkfloat_
   double tk0 = 0.0;
   if (tkon) { Kokkos::fence(); tk0 = platform::walltime(); tk_calls++; }
 
-  start_compute_device();   // particle_map + rho1d weights, once per step or after a re-arm (row 183)
+  start_compute_device();   // particle_map + rho1d weights, once per step or after a re-arm
 
   // (1) masked make_rho -> electrolyte density brick
   this->copymode = 1;
@@ -330,11 +302,11 @@ void PPPMSamqeqKokkos<DeviceType>::compute_vector_device(typename AT::t_kkfloat_
   this->copymode = 1;
   Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagSamqeqFillWork1>(0, this->nfft), *this);
   this->copymode = 0;
-  this->fft1->compute(this->d_work1, this->d_work1, FFT3dKokkos<DeviceType>::BACKWARD);  // CPU used -1
+  this->fft1->compute(this->d_work1, this->d_work1, FFT3dKokkos<DeviceType>::BACKWARD);  // CPU uses -1
   this->copymode = 1;
   Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagSamqeqMulGreens>(0, this->nfft), *this);
   this->copymode = 0;
-  this->fft2->compute(this->d_work2, this->d_work2, FFT3dKokkos<DeviceType>::FORWARD);   // CPU used +1
+  this->fft2->compute(this->d_work2, this->d_work2, FFT3dKokkos<DeviceType>::FORWARD);   // CPU uses +1
   // numx/y/z_inout are set inside PPPMKokkos::poisson_ik (which we don't call) -> set them here
   // (= the inner-brick extents) so TagSamqeqWork2ToU indexes identically to TagPPPM_poisson_ik6.
   this->numz_inout = this->nzhi_in - this->nzlo_in + 1;
@@ -379,7 +351,7 @@ void PPPMSamqeqKokkos<DeviceType>::compute_vector_device(typename AT::t_kkfloat_
   }
 }
 
-/* ---- (#29) stage-diagnostic reductions (see the header). Each hosts an extended device
+/* ---- stage-diagnostic reductions (see the header). Each hosts an extended device
    lambda that captures only its own arguments, so no copymode dance is needed. ----*/
 
 template<class DeviceType>
@@ -521,7 +493,7 @@ void PPPMSamqeqKokkos<DeviceType>::operator()(TagSamqeqMakeRhoMasked, const int 
   int nx = this->d_part2grid(i, 0);
   int ny = this->d_part2grid(i, 1);
   int nz = this->d_part2grid(i, 2);
-  // (#30): d_rho1d was filled for this step by TagSamqeqRho1d — do not recompute per call
+  // d_rho1d was filled for this step by TagSamqeqRho1d — do not recompute per call
   nz -= this->nzlo_out; ny -= this->nylo_out; nx -= this->nxlo_out;
 
   const FFT_SCALAR z0 = (FFT_SCALAR)(this->delvolinv_kk * this->q[i]);
@@ -578,8 +550,8 @@ void PPPMSamqeqKokkos<DeviceType>::operator()(TagSamqeqProjectPsi, const int &i)
   int nx = this->d_part2grid(i, 0);
   int ny = this->d_part2grid(i, 1);
   int nz = this->d_part2grid(i, 2);
-  // (#30): d_rho1d is filled once per step for ALL local atoms (TagSamqeqRho1d), so the sensor
-  // atoms' weights are already there — this used to recompute them on every call, a second time.
+  // d_rho1d is filled once per step for ALL local atoms (TagSamqeqRho1d), so the sensor atoms'
+  // weights are already there.
   nz -= this->nzlo_out; ny -= this->nylo_out; nx -= this->nxlo_out;
   KK_FLOAT v = 0.0;
   for (int n = this->nlower; n <= this->nupper; n++) {

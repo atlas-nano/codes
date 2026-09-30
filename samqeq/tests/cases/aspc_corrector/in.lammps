@@ -1,6 +1,6 @@
-# #16 ASPC regression: short rigid-water NVE with the q-direct predictor-corrector ENGAGED
-# (fix_modify chg aspc 2). Pins the ASPC code path — the final charges are deterministic at np=1
-# and exercise the predictor (history fills after k+2 steps) + the n_corr=2 corrector + omega-mix.
+# ASPC: short rigid-water NVE with the q-direct predictor-corrector ENGAGED
+# (fix_modify chg aspc 2). The final charges are deterministic at np=1 and exercise the
+# predictor (history fills after k+2 steps) + the n_corr=2 corrector + omega-mix.
 units           metal
 atom_style      full
 boundary        p p p

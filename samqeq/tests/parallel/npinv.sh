@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-# samQEq np-INVARIANCE of the recip_self calibration (, TASKS row 182, ledger L52). Release check, by hand;
+# samQEq np-INVARIANCE of the recip_self calibration. Run by hand;
 # parallel.sh calls it. Each fixture runs `run 0` under five processor grids -- 1 1 1 / 2 1 1 / 1 1 2 / 2 2 1 / 1 4 1
 # (the default grid of a cubic box splits z, which hides an x/y-split pair change) -- and FAILS unless:
-#   - every run exits 0 (no "no rank owning two fix-group atoms" refusal, the earlier np4 failure),
+#   - every run exits 0 (no "no rank owning two fix-group atoms" refusal),
 #   - the logged recip_self value is present and identical to the 1x1x1 run (a missing value FAILS: never vacuous),
 #   - every charge agrees with the 1x1x1 run to 1e-9 e (MPI reduction order forbids %.17g equality).
 # Fixtures are the goldens with the orientation PINNED: `create_atoms ... mol` without `rotate` draws each molecule's
 # orientation from RanMars(seed + comm->me) (src/create_atoms.cpp:365), so an unpinned golden is a DIFFERENT geometry at
-# np 2 (ledger L51). The data-file fixtures need no pin.
-#   spcfq_gas_ewald, ionfield_cl_water  3-atom groups: the earlier tiny-group legacy fallback (probe route after )
-#   metal_slab_gself                    240-atom Au lattice, G2-window miss -> legacy pair under the default K=16
-#   shield_special00                    375-atom liquid water, G2-window miss -> legacy pair; the earlier pick moved q by
-#                                       0.056 e with `atom_modify sort 0` alone. Its extra arm `nosort` (1x1x1, sort 0)
-#                                       must match too: the pair may depend on neither decomposition nor sort order.
-# Pre-binaries FAIL this check (spcfq_gas_ewald/ionfield_cl_water at 4xy, a refusal at 4y; shield_special00 nosort).
+# np 2. The data-file fixtures need no pin.
+#   spcfq_gas_ewald, ionfield_cl_water  3-atom groups (probe route on a tiny group)
+#   metal_slab_gself                    240-atom Au lattice, G2-window miss -> single-pair fallback under the default K=16
+#   shield_special00                    375-atom liquid water, G2-window miss -> single-pair fallback. Its extra arm
+#                                       `nosort` (1x1x1, `atom_modify sort 0`) must match too: the pair may depend on
+#                                       neither decomposition nor sort order.
 # Usage: ./npinv.sh            LMP=/path/to/lmp ./npinv.sh
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

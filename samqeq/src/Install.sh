@@ -29,8 +29,8 @@ action () {
 # all package files
 # pppm_samqeq depends on the KSPACE package (PPPM base class); only install it
 # when KSPACE is present (arg2 of action gates on ../pppm.h existing).
-# fix_qeq_base_sam + fix_acks2_sam are the self-contained ACKS2/QEq base (ported
-# from REAXFF so SAMQEQ no longer requires the REAXFF package); core-only deps.
+# fix_qeq_base_sam + fix_acks2_sam are the self-contained ACKS2/QEq base, so
+# SAMQEQ does not require the REAXFF package; core-only deps.
 action fix_qeq_base_sam.cpp
 action fix_qeq_base_sam.h
 action fix_acks2_sam.cpp

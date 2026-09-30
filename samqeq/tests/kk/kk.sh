@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# tests/kk/kk.sh — the Kokkos/GPU arm of the samQEq regression suite (row 183).
+# tests/kk/kk.sh — the Kokkos/GPU arm of the samQEq test suite.
 #
 # Runs cases/<name>/in.lammps with `-k on g 1 -sf kk` at np 1 and compares to the HOST goldens. The host
-# runner (run_tests.sh) never sees a device path, which is why the second-run rho1d defect lived in every
-# kk production run and 3 suite cases without a single suite failure.
+# runner (run_tests.sh) never exercises a device path, so device-only defects are caught only here.
 #
 # Expectations live in kk/expect.txt, one line per case:   <case>  PASS <rtol> | REFUSED <error-substring> | XFAIL <why>
 #   PASS    ran, charges (and pe.txt) match the host golden within <rtol> (ATOL 1e-12)
@@ -14,7 +13,7 @@
 # Cases absent from expect.txt are FAIL "unclassified" — every suite case must be classified for the device arm.
 #
 # Exit: 0 all as expected; 1 a case failed; 3 SKIPPED (no Kokkos styles in the binary, or no usable GPU) —
-# distinct from 0 on purpose: a CI that treats "no GPU" as green is how this went unseen.
+# distinct from 0 on purpose, so that a CI cannot report "no GPU" as green.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; T="$HERE/.."
 LMP="${LMP:-$HOME/codes/lammps/lammps-dev2/build/lmp_parallel}"

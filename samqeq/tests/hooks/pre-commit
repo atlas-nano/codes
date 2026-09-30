@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# samQEq pre-commit hook — run the bit-correctness suite and block the commit if it
-# regresses. Lives under  (gitignored, local-only since ); install with:
+# samQEq pre-commit hook — run the bit-correctness suite and block the commit if any
+# case fails. Install with:
 #
 #     git config core.hooksPath tests/hooks
 #
@@ -15,8 +15,8 @@ set -u
 ROOT="$(git rev-parse --show-toplevel)"
 LMP="${LMP:-$HOME/codes/lammps/lammps-dev2/build/lmp_parallel}"
 
-# only run if SAMQEQ sources or the tests are part of this commit (: the tests were not actually checked before, so a
-# test-only commit -- a new case or a re-baselined golden -- went in unverified)
+# only run if SAMQEQ sources or the tests are part of this commit; a test-only commit (a new case or a
+# re-baselined golden) is checked too
 if git diff --cached --quiet -- src/SAMQEQ tests; then
   exit 0
 fi
@@ -33,7 +33,7 @@ if LMP="$LMP" "$ROOT/tests/run_tests.sh" >"$log" 2>&1; then
   grep -E "passed=" "$log" >&2
   echo "samQEq pre-commit: all bit-tests pass." >&2
   rm -f "$log"
-  # : the refusal probes (a deck that must be REFUSED at init, plus its runnable control); ~2 s
+  # the refusal probes (a deck that must be REFUSED at init, plus its runnable control); ~2 s
   rlog="$(mktemp)"
   if LMP="$LMP" "$ROOT/tests/refusals.sh" >"$rlog" 2>&1; then
     grep -E "refusals passed=" "$rlog" >&2

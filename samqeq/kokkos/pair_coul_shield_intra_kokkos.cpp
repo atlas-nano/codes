@@ -134,13 +134,12 @@ void PairCoulShieldIntraKokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 /* ----------------------------------------------------------------------
    fpair for the shield−bare correction, gated on the intra-molecular mask.
    cbrt (shield_gauss==SHIELD_CBRT, default): K (r·sh⁴ − factor_coul/r³) -- matches the CPU pair
-   exactly (factor_coul fix, backlog item a; byte-identical to pre-fix at factor_coul==1, the
-   only case in the CPU-only 24-case suite). pqeq (shield_gauss==SHIELD_GAUSSIAN):
+   exactly (only the −1/r term tracks factor_coul). pqeq (shield_gauss==SHIELD_GAUSSIAN):
    K[(erf(α_ij r) − factor_coul)/r³ − (2α_ij/√π)exp(−α_ij²r²)/r²], the exact
    device mirror of the CPU pair's PQEq branch in compute()/single() (α_ij
    precomputed per-type-pair on the HOST in init_one(), stored in
-   params_coulshield::aij -- see the header). slater (shield_gauss==SHIELD_SLATER, backlog item
-   b): −K(dJ/dr + factor_coul/r²)/r using the tabulated Rick J(r)/dJ/dr (device table built in
+   params_coulshield::aij -- see the header). slater (shield_gauss==SHIELD_SLATER):
+   −K(dJ/dr + factor_coul/r²)/r using the tabulated Rick J(r)/dJ/dr (device table built in
    init_style(), evaluated via slater_eval() -- device mirror of SlaterJTable::eval()), the exact
    device counterpart of the CPU pair's SLATER branch in compute()/single().
 -------------------------------------------------------------------------*/
@@ -162,7 +161,7 @@ compute_fcoul(const KK_FLOAT& rsq, const int& i, const int&j, const int& itype,
     KK_FLOAT J, dJdr;
     slater_eval(itype, jtype, r, J, dJdr);
     const KK_FLOAT K = qqrd2e * qtmp * q(j);
-    // fpair = −(1/r)dE/dr, E = K(J − factor_coul/r) -> matches CPU pair_coul_shield_intra.cpp:117.
+    // fpair = −(1/r)dE/dr, E = K(J − factor_coul/r) -> matches the CPU pair_coul_shield_intra.cpp.
     return -K * (dJdr + factor_coul*r2inv) * rinv;
   }
 
@@ -182,19 +181,17 @@ compute_fcoul(const KK_FLOAT& rsq, const int& i, const int&j, const int& itype,
   const KK_FLOAT sh4 = sh*sh*sh*sh;
   const KK_FLOAT K = qqrd2e * qtmp * q(j);
   // fpair = −(1/r) dE/dr = K (r·sh⁴ − factor_coul/r³) -- ONLY the −1/r compensation term tracks
-  // factor_coul (matches the CPU pair's compute()/single(), pair_coul_shield_intra.cpp:135/410).
-  // FIX (backlog item a): was `factor_coul * K * (r*sh4 - rinv*r2inv)` -- scaled the WHOLE
-  // bracket, which only agrees with the CPU formula at factor_coul==1 (flagged UNSURE in
-  // NOTE_B10_kk_pqeq.md). Byte-identical at factor_coul==1 (the only case exercised by the CPU-only
-  // 24-case suite, which has no kk cases); changes device forces only for fractional special_bonds
-  // coul weights on bonded intramolecular topology under -sf kk.
+  // factor_coul (matches the CPU pair's compute()/single(), pair_coul_shield_intra.cpp). Scaling the
+  // WHOLE bracket by factor_coul would agree with the CPU formula only at factor_coul==1, i.e. it would
+  // be wrong for fractional special_bonds coul weights on bonded intramolecular topology.
   return K * (r*sh4 - factor_coul*rinv*r2inv);
 }
 
 /* ----------------------------------------------------------------------
    ecoul for the shield−bare correction, gated on the mask.
-   cbrt: K (sh − factor_coul/r) -- factor_coul fix (item a), matches CPU exactly. pqeq:
-   K(erf(α_ij r) − factor_coul)/r, the device mirror of the CPU pair's PQEq branch. slater (backlog item b): K(J − factor_coul/r), the device mirror of the CPU pair's SLATER branch.
+   cbrt: K (sh − factor_coul/r), matches CPU exactly. pqeq:
+   K(erf(α_ij r) − factor_coul)/r, the device mirror of the CPU pair's PQEq branch. slater:
+   K(J − factor_coul/r), the device mirror of the CPU pair's SLATER branch.
 -------------------------------------------------------------------------*/
 
 template<class DeviceType>
@@ -227,8 +224,8 @@ compute_ecoul(const KK_FLOAT& rsq, const int& i, const int&j, const int& itype,
   const KK_FLOAT g = (STACKPARAMS?m_params[itype][jtype].gamma:params(itype,jtype).gamma);
   const KK_FLOAT sh = 1.0/cbrt(rsq*r + 1.0/(g*g*g));
   const KK_FLOAT K = qqrd2e * qtmp * q(j);
-  // FIX (backlog item a): matches CPU E = K(sh - factor_coul/r) exactly; was
-  // `factor_coul * K * (sh - rinv)` (whole-bracket scaling, see compute_fcoul comment above).
+  // matches CPU E = K(sh - factor_coul/r) exactly (only the -1/r term tracks factor_coul, see
+  // compute_fcoul above).
   return K * (sh - factor_coul*rinv);
 }
 
@@ -267,10 +264,9 @@ void PairCoulShieldIntraKokkos<DeviceType>::init_style()
   // device-table upload below, which copies FROM slater_tabs.
   PairCoulShieldIntra::init_style();
 
-  // compute_fcoul/compute_ecoul now implement all three shielding kernels: cbrt (default,
-  // untouched), PQEq Gaussian (shield_gauss==SHIELD_GAUSSIAN; B10 port, params_coulshield::aij), and
-  // Slater (shield_gauss==SHIELD_SLATER; backlog item b, ported below -- dense device table +
-  // slater_eval(), mirroring how PQEq was ported in B10).
+  // compute_fcoul/compute_ecoul implement all three shielding kernels: cbrt (default), PQEq
+  // Gaussian (shield_gauss==SHIELD_GAUSSIAN; params_coulshield::aij), and Slater
+  // (shield_gauss==SHIELD_SLATER; dense device table below + slater_eval()).
   if (shield_gauss == SHIELD_SLATER) {
     const int nt = atom->ntypes;
     const int npts = slater_tabs.empty() ? 0 : slater_tabs[0].npts;

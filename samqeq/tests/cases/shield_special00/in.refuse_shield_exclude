@@ -1,12 +1,12 @@
-# s88b REFUSAL PROBE (refuse `exclude molecule/intra` with pair coul/shield/intra): this case's deck plus
-# `neigh_modify exclude molecule/intra all`, which silently gave 0.6 e charge errors before s88b.
+# REFUSAL PROBE (refuse `exclude molecule/intra` with pair coul/shield/intra): this case's deck plus
+# `neigh_modify exclude molecule/intra all`, which removes the intramolecular pairs the kernel needs.
 # EXPECT: neigh_modify exclude molecule/intra is active
-# s88b acceptance case `shield_special00` (proposed tests/cases/shield_special00/in.lammps).
-# Bonded rigid SPC-FQ water, coul/long + coul/shield/intra + pppm/samqeq + fix qeq/sam, with the special_bonds
-# setting the guard refuses: lj 0 0 0 coul 0 0 0 under a KSPACE style. LAMMPS keeps those pairs in every
+#
+# Bonded rigid SPC-FQ water, coul/long + coul/shield/intra + pppm/samqeq + fix qeq/sam, with
+# special_bonds lj 0 0 0 coul 0 0 0 under a KSPACE style. LAMMPS keeps those pairs in every
 # neighbor list (neighbor.cpp:550-551 -> special_flag=2), so this deck's physics is IDENTICAL to
-# `special_bonds lj 1e-300 1e-300 1e-300 coul 0 0 0` (in.golden_gen), which is legal today and produced golden/.
-# Post-fix this deck must run and reproduce golden/ bit-for-bit at np1 (RTOL 1e-9 in run_tests.sh).
+# `special_bonds lj 1e-300 1e-300 1e-300 coul 0 0 0`, which produced golden/.
+# This deck must run and reproduce golden/ bit-for-bit at np1 (RTOL 1e-9 in run_tests.sh).
 variable        slj index 0.0
 units           metal
 atom_style      full

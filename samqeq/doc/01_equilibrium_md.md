@@ -49,7 +49,7 @@ run 20000
   `units real` and every param-file column and `fix_modify` numeric argument is interpreted in kcal/mol instead
   — no separate real-units param file convention, just scale the energy-dimensioned numbers by ×23.060549 if you
   want the same physical water (charge-dimensioned values like `q0` are unchanged). See the top-level README's
-  *Units convention* section for the full R1/R2/R3 policy.
+  *Units convention* section for the full policy.
 - **Charge equilibrates within each molecule.** Charge equilibrates only
   inside each molecule ID (per-fragment neutrality). Different molecules cannot exchange net charge.
 - **`coul/shield/intra`** is the shielded Coulomb whose kernel matches the QEq solve's intramolecular term — use

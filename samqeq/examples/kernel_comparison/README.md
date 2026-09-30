@@ -39,8 +39,7 @@ GAS_CBRT qM=0.91109 qH1=-0.45555 qH2=-0.45555 mu_D=1.90801 pe_eV=0.859385
 
 The `pe` column includes the on-site term $\sum_i(\chi_i q_i + \frac{1}{2}\eta_i q_i^2)$, which
 counts toward `pe` and `etotal` by default. It exerts no force and contributes no virial, but it is
-part of the conserved quantity; `fix_modify <id> energy no` excludes it and recovers the older
-numbers. Of note, the inverted cube-root solve is driven to a **positive** total energy, which the
+part of the conserved quantity; `fix_modify <id> energy no` excludes it. Of note, the inverted cube-root solve is driven to a **positive** total energy, which the
 charge signs alone do not show.
 
 ## What the two runs differ by

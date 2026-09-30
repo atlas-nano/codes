@@ -1,11 +1,11 @@
-# metal_slab_gself — validation record (2026-08-23)
+# metal_slab_gself — validation notes
 
 Pins `fix_modify gself`: the finite-width charge self-energy K_e·sqrt(2α/π) folded into η from eta0
 at init(). 240-atom Au(111) slab, PQEq kernel, full Ewald (pinned mesh), E = 0.5 V/Å, η_Au = 5.172
 (the physical Thomas–Fermi hardness, l_TF = 0.72 Å — NOT touched), Gaussian width w = 0.5 Å (η⁻¹ = w√2 = 0.71 Å in Scalfi's
 convention; Scalfi et al. used η⁻¹ = 0.56 Å).
 
-Controls run before freezing:
+Controls:
 - **Negative control (the golden depends on the term):** same deck, `gself off`:
     layer OFF ON
       1 -2.1707 -1.0562
@@ -20,10 +20,7 @@ Controls run before freezing:
   1.8× / 2.5× / 3.9× / 5.6× Gauss, staggered, diverging.
 - **Exactness of the fold:** at the default width (per-type PQEq Rc/√λ, E_self = 3.416 eV) the real knob
   reproduces a hand-emulation through η to every printed digit.
-- The rest of the suite (32 cases) is byte-identical with gself off (default).
+- The rest of the suite is byte-identical with gself off (default).
 
-(First freeze attempt captured the negative-control run's pe.txt (2.680) with the ON charges — my copy
-ordering; regenerated from a clean ON run: pe = 2.22754439581523, verified twice.)
-- **2026-09-16 re-baseline (pe.txt only):** the reported energy now includes gself's E_self
-  (gself_energy_20260916). pe moved 2.35068898731 -> 2.73755775570, i.e.
-  +0.38686876839 eV = ½·E_self(0.50)·Σq² from the golden charges (predicted 0.38686876840). charges.dump unchanged.
+pe.txt is the reported energy, which includes gself's ½·E_self(0.50)·Σq² over the golden charges
+(0.38686876839 eV).

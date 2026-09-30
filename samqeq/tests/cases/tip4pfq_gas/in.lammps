@@ -1,6 +1,6 @@
-# Bit-test: TIP4P-FQ 4-site (M-site) single molecule, short-range gated solve.
+# Bit-test: TIP4P-FQ 4-site (M-site) single molecule, short-range solve.
 # Pins the 4-site augmented-X path (charge on H + massless M, oxygen excluded from
-# the fq group) — the TIP4P-FQ solver that the long-standing blocker lives in.
+# the fq group).
 units           metal
 atom_style      full
 boundary        f f f

@@ -1,12 +1,11 @@
-# EW3DC (Yeh-Berkowitz) slab-correction regression: SPC-FQ water SLAB under
+# EW3DC (Yeh-Berkowitz) slab correction: SPC-FQ water SLAB under
 # boundary p p f + kspace_modify slab 3.0, solved with the self-contained
-# long-range path (kspace_style pppm/samqeq, lr_ewald=2). This pins BOTH new
+# long-range path (kspace_style pppm/samqeq, lr_ewald=2). This pins BOTH
 # slab code paths: (a) the analytic dipole term PPPMSamqeq::compute_vector adds
 # to the charge-solve potential, and (b) the inherited PPPM::slabcorr() force/
 # energy correction exercised by the 10 NVE steps (starting from zero
 # velocities, so the trajectory is pure force integration -- any solve<->force
-# inconsistency moves the final charges/PE). Before this feature the deck
-# errored out at init: "pppm/samqeq does not support kspace_modify slab".
+# inconsistency moves the final charges/PE).
 units           metal
 atom_style      full
 boundary        p p f

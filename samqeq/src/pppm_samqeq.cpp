@@ -74,8 +74,7 @@ PPPMSamqeq::~PPPMSamqeq()
    PPPM::compute() (chained to by our compute()) calls PPPM::slabcorr() for the
    force/energy dipole correction; compute_vector below adds the SAME dipole term
    analytically to the per-atom potential so the charge solve and the forces
-   derive from one energy functional (else: energy nonconservation, the
-   recip_self-mismatch class of bug). Placed in init() (not compute_vector)
+   derive from one energy functional (else: energy nonconservation). Placed in init() (not compute_vector)
    because init() is the standard once-per-setup contract-validation hook (also
    re-run on triclinic/box-style changes via PPPM::init()'s own
    triclinic_check()), so this fires before any solve rather than on the first
@@ -86,20 +85,14 @@ void PPPMSamqeq::init()
 {
   PPPM::init();
 
-  // ★ RUN-BOUNDARY FIX (, triage of the P0 reset_timestep crash): PPPM::init() -- called at EVERY
-  // `run` command -- deallocates + reallocates ALL grid arrays (our allocate() memsets them to 0), and
-  // greensfn/fk*/vg are only recomputed by PPPM::setup(), which Verlet::setup runs AFTER the fix's
-  // setup_pre_force. start_compute()'s self-heal sentinel (`compute_step == -1`) only detected the very
-  // FIRST setup ever (constructor init), so on a 2nd+ run whose boundary solve is allowed to proceed --
-  // exactly the `reset_timestep 0` production idiom, where ntimestep==0 masquerades as a fresh first
-  // setup and defeats the #9 boundary skip AND leaves compute_step (= last step of the previous run)
-  // > ntimestep -- compute_vector ran the ENTIRE boundary charge solve on an all-zero greensfn: zero
-  // reciprocal operator while recip_self is still subtracted from the diagonal (~4.9 eV/e softening)
-  // -> indefinite operator, CG stalls at cap, garbage/over-polarized charges -> "Out of range atoms -
-  // cannot compute PPPM" crash lottery (gdb-verified : compute_step=100, ntimestep=0, greensfn==0
-  // through make_rho_in_brick). init() is precisely the point where the grid is invalidated, so re-arm
-  // the sentinel here: the next compute_vector self-heals via setup(). Byte-identical for single-run
-  // decks (constructor already set -1); multi-run decks get one redundant-but-identical setup() per run.
+  // ★ RUN BOUNDARY: PPPM::init() -- called at EVERY `run` command -- deallocates + reallocates ALL grid
+  // arrays (our allocate() memsets them to 0), and greensfn/fk*/vg are only recomputed by PPPM::setup(),
+  // which Verlet::setup runs AFTER the fix's setup_pre_force. Without a reset, a 2nd+ run (notably after
+  // `reset_timestep 0`, where compute_step from the previous run can exceed ntimestep) would run the
+  // boundary charge solve on an all-zero greensfn: zero reciprocal operator while recip_self is still
+  // subtracted from the diagonal -> indefinite operator, stalled CG, over-polarized charges. init() is
+  // precisely the point where the grid is invalidated, so re-arm the sentinel here: the next compute_vector
+  // self-heals via setup(). Multi-run decks get one redundant-but-identical setup() per run.
   compute_step = -1;
 
   if (slabflag == 2)
@@ -129,13 +122,12 @@ void PPPMSamqeq::allocate()
     memory->create3d_offset(u_brick, nzlo_out, nzhi_out, nylo_out, nyhi_out, nxlo_out, nxhi_out,
                             "pppm:u_brick");
 
-  // ★ UNINITIALISED-MEMORY FIX (valgrind, session 16): the FIRST compute_vector() runs in the qeq fix's
-  // setup_pre_force (recip_self calibration + the first solve) — BEFORE any PPPM::compute(), which is what
-  // normally fills/zeros these grid + FFT-domain buffers each step. So on the first call (and after every
-  // grid re-setup/resize, which reallocs fresh uninitialised heap) the path reads uninitialised cells; the
-  // garbage flows through the reciprocal potential -> the QEq matvec/CG -> spurious forces -> atoms drift off
-  // the PPPM grid -> "Out of range atoms - cannot compute PPPM" on re-setup/large grids. Zero everything the
-  // compute_vector path touches so the very first call is well-defined (one-time per allocate; negligible cost).
+  // ★ ZERO-INITIALISE: the FIRST compute_vector() runs in the qeq fix's setup_pre_force (recip_self
+  // calibration + the first solve) — BEFORE any PPPM::compute(), which is what normally fills/zeros these
+  // grid + FFT-domain buffers each step. On the first call (and after every grid re-setup/resize, which
+  // reallocs fresh heap) the path would otherwise read uninitialised cells into the reciprocal potential ->
+  // the QEq matvec/CG -> spurious forces. Zero everything the compute_vector path touches so the very first
+  // call is well-defined (one-time per allocate; negligible cost).
   memset(&(electrolyte_density_brick[nzlo_out][nylo_out][nxlo_out]), 0, ngrid * sizeof(FFT_SCALAR));
   memset(electrolyte_density_fft, 0, nfft_both * sizeof(FFT_SCALAR));
   if (differentiation_flag != 1)
@@ -165,12 +157,10 @@ void PPPMSamqeq::deallocate()
   }
 
   PPPM::deallocate();
-  // #31 exit-segfault fix: PPPM::deallocate() does raw `delete gc/fft1/fft2/remap` WITHOUT nulling, so it
-  // is NOT idempotent. We call it here (needed for the mid-run grid-resize realloc), but the base ~PPPM()
-  // ALSO calls PPPM::deallocate() at destruction -> a SECOND raw delete of those now-dangling pointers ->
-  // double-free / "Address not mapped" segfault at program exit. Null them so the base's second call is a
-  // no-op (delete nullptr / memory->destroy(nullptr) are both safe). (PPPMElectrode avoids this by
-  // re-implementing the full deallocate with nulling instead of chaining to PPPM::deallocate.)
+  // PPPM::deallocate() does raw `delete gc/fft1/fft2/remap` WITHOUT nulling, so it is NOT idempotent.
+  // We call it here (needed for the mid-run grid-resize realloc), but the base ~PPPM() ALSO calls
+  // PPPM::deallocate() at destruction -> a second raw delete of dangling pointers -> double free at exit.
+  // Null them so the base's second call is a no-op (delete nullptr / memory->destroy(nullptr) are both safe).
   gc = nullptr;
   fft1 = nullptr;
   fft2 = nullptr;
@@ -265,16 +255,16 @@ void PPPMSamqeq::start_compute()
    qscale*g_ewald*(qsqsum_setup - qsqsum_now)/sqrt(pi) (large when the setup
    charges are far from equilibrated, e.g. straight off `set`). The term is
    position-independent => it contributes NO force, so dynamics are unaffected;
-   this only fixes the reported energy. qsum_qsq() is a single scalar Allreduce
+   this only corrects the reported energy. qsum_qsq() is a single scalar Allreduce
    (negligible vs PPPM's per-step FFTs) and does not touch the grid/forces.
 -------------------------------------------------------------------------*/
 
 void PPPMSamqeq::compute(int eflag, int vflag)
 {
   qsum_qsq(0);                 // re-measure qsum/qsqsum from the current (solved) charges (0 = no per-step neutrality warning; setup already warns once)
-  PPPM::compute(eflag, vflag); // stock reciprocal solve; now uses the fresh qsqsum in its self-energy.
+  PPPM::compute(eflag, vflag); // stock reciprocal solve, using the fresh qsqsum in its self-energy.
                                // Under slabflag==1 this also runs the inherited PPPM::slabcorr()
-                               // (force/energy dipole correction), whose non-neutral qsum terms now
+                               // (force/energy dipole correction), whose non-neutral qsum terms
                                // see the fresh qsum too — matching compute_vector's slab term exactly.
 }
 
@@ -292,13 +282,13 @@ void PPPMSamqeq::compute_vector(double *vec, int sensor_grpbit, int source_grpbi
   // temporarily swapping in the electrolyte density pointers.
   FFT_SCALAR ***density_brick_real = density_brick;
   FFT_SCALAR *density_fft_real = density_fft;
-  // E1 (scaling audit): under DYNAMICS, positions are fixed within a timestep, so start_compute()'s lazy
-  // once-per-step particle_map() above is already current for every matvec of the step's solve(s) —
-  // unconditionally recomputing the identical map here (~30x/step at the observed CG budget) was pure
-  // waste. MINIMIZATION is the one caller where positions DO change within a single ntimestep (line-search
-  // energy evaluations share the iteration's step number), so keep the per-call refresh whenever this is
-  // not a dynamics run (update->whichflag: 1 = dynamics, 2 = minimize, 0 = between runs — refresh kept for
-  // both non-dynamics cases out of caution). Bit-preserving: when skipped, the map is identical anyway.
+  // Under DYNAMICS, positions are fixed within a timestep, so start_compute()'s lazy once-per-step
+  // particle_map() above is already current for every matvec of the step's solve(s); recomputing the
+  // identical map here would cost one map per matvec. MINIMIZATION is the one caller where positions DO
+  // change within a single ntimestep (line-search energy evaluations share the iteration's step number),
+  // so keep the per-call refresh whenever this is not a dynamics run (update->whichflag: 1 = dynamics,
+  // 2 = minimize, 0 = between runs — refresh kept for both non-dynamics cases). When skipped, the map is
+  // identical anyway.
   if (update->whichflag != 1) particle_map();
   make_rho_in_brick(source_grpbit, electrolyte_density_brick, invert_source);
   density_brick = electrolyte_density_brick;
@@ -472,8 +462,8 @@ void PPPMSamqeq::make_rho_in_brick(int source_grpbit, FFT_SCALAR ***scratch_bric
 }
 
 /* ----------------------------------------------------------------------
-   R4: EXACT per-atom grid self-coefficient (REQUEST_recip_self_wander_guard R4; the TODO in the
-   calibrate_recip_self banner). compute_vector() forms
+   EXACT per-atom grid self-coefficient (the alternative to the probe-pair calibration in
+   calibrate_recip_self). compute_vector() forms
        prec_i = (1/N_grid) sum_g W_i(g) u(g), u = B[ G. F[rho] ], rho(g') = delvolinv sum_j q_j W_j(g')
    with F/B the unnormalized forward/backward FFTs, so atom i's OWN contribution to prec_i is exactly
        c_i = (delvolinv/N_grid) sum_{g,g'} W_i(g) W_i(g') Kr(g-g'), Kr(D) = B[G](D) = sum_k G(k) e^{+ik.D}.
@@ -481,15 +471,14 @@ void PPPMSamqeq::make_rho_in_brick(int source_grpbit, FFT_SCALAR ***scratch_bric
    (2P-1)^3 entries gathered by Allreduce (replicated, decomposition-independent). Per atom the double sum
    factorizes through the 1-d stencil autocorrelations C_x(D) = sum_a W_x(a) W_x(a+D):
        c_i = (delvolinv/N_grid) sum_D C_x(D_x) C_y(D_y) C_z(D_z) Kr(D) ((2P-1)^3 = 729 terms at P=5).
-   ★ WHAT THE OPERATOR NEEDS IS NOT K_ii BUT K_ii − ξ (measured 2026-09-02, the first build of this route).
+   ★ WHAT THE OPERATOR NEEDS IS NOT K_ii BUT K_ii − ξ.
    K_ii is the grid's k≠0 self-potential of a LONE charge: it contains the charge's interaction with its own
    periodic images (the k=0 mode is dropped ⇒ neutralizing background): ξ = ψ_{k≠0}(0) − 2α/√π (+ Σ_{n≠0}
    erfc(αn)/n), the Wigner-type constant → −2.837/L for a cube. The Ewald energy the forces integrate keeps
    ½ξΣq² (a real term of the periodic system), so the solve's diagonal must be η + ξ, i.e. the quantity to
    subtract from the grid diagonal is 2α/√π − smearing = K_ii − ξ. A neutral PROBE PAIR cancels ξ and so
-   measures exactly that (water box: K_ii 0.16864, ξ −0.21453, K_ii − ξ 0.38317 vs probe 0.38207; 24.8 Å box:
-   0.27054 + 0.114 vs 0.38303). The remaining 3e-3 is the probe's own short-range grid pair error (SELFDIAG
-   pairs at 1–2 spacings scatter 0.33–0.375), which this route does not have. ξ is evaluated analytically on
+   measures exactly that, up to the probe's own short-range grid pair error (~1e-2 relative), which this route
+   does not have. ξ is evaluated analytically on
    the reciprocal lattice of the (slab-extended) box with the same g_ewald; the influence function equals the
    exact kernel at low k to O((kh)^{2P}), so ξ_grid = ξ to well below 1e-4. The per-atom sub-grid variation of
    K_ii is ≤1e-5 at order 5 (B-spline autocorrelations are nearly shift-invariant), so the practical content of

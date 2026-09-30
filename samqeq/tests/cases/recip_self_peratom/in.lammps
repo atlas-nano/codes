@@ -1,9 +1,9 @@
-# R4 regression: `fix_modify recip_self peratom` -- the EXACT per-atom PPPM grid self-coefficient replaces
+# `fix_modify recip_self peratom` -- the EXACT per-atom PPPM grid self-coefficient replaces
 # the calibrated scalar (same 81-water SPC-FQ box as spcfq_liq_ewald; K=16 scalar there is 0.38207 raw).
-
-# Bit-correctness / #5 regression: small periodic SPC-FQ liquid solved with the
+#
+# Bit-correctness: small periodic SPC-FQ liquid solved with the
 # self-contained long-range path (kspace_style pppm/samqeq, lr_ewald=2 fully
-# shielded). This is the test that pins PPPMSamqeq::compute_vector — if the
+# shielded). This pins PPPMSamqeq::compute_vector — if the
 # reciprocal per-atom potential changes, the solved charges move and this fails.
 units           metal
 atom_style      full

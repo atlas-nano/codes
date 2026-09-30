@@ -11,9 +11,9 @@
      intra_only==0 (lr_ewald=2): correct all in-cutoff pairs.
 
    Net intra Coulomb = J_shield(r) = 1/∛(r³+1/γ³); inter untouched. This
-   keeps the kk pair forces/energy byte-consistent with the CPU pair and
-   with FixQEqSam's solve, unblocking production -sf kk samQEq decks (the
-   CPU-only pair otherwise crashes the kk Serial neighbor build).
+   keeps the kk pair forces/energy consistent with the CPU pair and with
+   FixQEqSam's solve under -sf kk (the CPU-only pair cannot be served by the
+   kk neighbor build).
 -------------------------------------------------------------------------*/
 
 #ifdef PAIR_CLASS
@@ -59,11 +59,11 @@ class PairCoulShieldIntraKokkos : public PairCoulShieldIntra {
     // aij: PQEq per-type-pair shielding exponent alpha_ij = sqrt(ai*aj/(ai+aj)), ai = shield_lambda*0.5/Rc_i^2
     // (Rc_i = the per-type diagonal gamma[i][i]); precomputed on the HOST in init_one() (mirrors the CPU pair's
     // per-call computation in compute()/single()). Only meaningful when shield_gauss==SHIELD_GAUSSIAN; left 0
-    // (unused) in cbrt mode -- does not affect the untouched cbrt math.
+    // (unused) in cbrt mode.
     KK_FLOAT cutsq, gamma, aij;
   };
 
-  // Slater (Rick J(r), shield_gauss==SHIELD_SLATER) device table (, backlog item b): dense
+  // Slater (Rick J(r), shield_gauss==SHIELD_SLATER) device table: dense
   // [itype][jtype][node] view, built in init_style() from the CPU base class' `slater_tabs`
   // (PairCoulShieldIntra::init_style() -> build_slater_tables() runs FIRST, see the .cpp) via a
   // host mirror + one deep_copy. Every type-pair table shares the SAME (rmin,dr,npts) grid (see

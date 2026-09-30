@@ -31,8 +31,7 @@
 
 #include "math_special.h"   // core: square() (replaces reaxff_defs.h SQR)
 
-// SQR formerly came from reaxff_defs.h (via reaxff_api.h); map it to the core
-// MathSpecial helper. DANGER_ZONE is an inlined default (drops the REAXFF dep).
+// SQR maps to the core MathSpecial helper. DANGER_ZONE is an inlined default (no REAXFF dependency).
 #define SQR(x) MathSpecial::square(x)
 static constexpr double DANGER_ZONE = 0.90;
 
@@ -82,7 +81,7 @@ FixACKS2Sam::FixACKS2Sam(LAMMPS *lmp, int narg, char **arg) :
 
   // Update comm sizes for this fix
   comm_forward = comm_reverse = 2;
-  // : exchange payload = s_hist + s_hist_X (nprev each) + q_hist (6, ASPC) — see pack_exchange.
+  // Exchange payload = s_hist + s_hist_X (nprev each) + q_hist (6, ASPC) — see pack_exchange.
   maxexchange = 2*nprev + 6;
 
   s_hist_X = s_hist_last = nullptr;
@@ -165,10 +164,10 @@ void FixACKS2Sam::allocate_storage()
   memory->create(y,size,"acks2:y");
   memory->create(z,size,"acks2:z");
 
-  // (uninit_reads_s86): start every augmented vector at zero. Each is created fresh here (on every run setup and
-  // nmax growth) and glibc hands back recycled chunks, so a slot read before it is written -- as init_matvec's
-  // constraint tail was on ranks != last_rows_rank (D2) -- saw whatever the previous holder left. D2 is fixed at its
-  // site; this makes any future read of a never-written slot a deterministic 0. Nothing is kept across a reallocation.
+  // Start every augmented vector at zero. Each is created fresh here (on every run setup and nmax growth) and
+  // the allocator hands back recycled chunks, so a slot read before it is written would see whatever the previous
+  // holder left; zeroing makes any read of a never-written slot a deterministic 0. Nothing is kept across a
+  // reallocation.
   for (double *v : {s, b_s, p, q, r, d, g, q_hat, r_hat, y, z})
     for (int k = 0; k < size; k++) v[k] = 0.0;
 }
@@ -290,13 +289,12 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
 
   init_matvec();   // sets s = cubic predictor of the augmented vector (charges s[i] DIRECTLY -> q-direct)
 
-  // : ENFORCE the exclusion that aspc_setup() has always documented -- "NOT engaged for the ACKS2
-  // saddle (it keeps aspc_on=0 -> BO)". It was a comment, never code:
+  // ENFORCE the aspc_setup() exclusion -- "NOT engaged for the ACKS2 saddle (it keeps aspc_on=0 -> BO)".
   // `fix_modify <id> aspc N` sets aspc_on=1 regardless of which solve path will run, and reaching HERE
-  // means the ACKS2 saddle. Measured on an ACKS2 saddle deck, ASPC buys 9.6% wall-clock for a 581x loss
-  // of charge conservation (qtot RMS 1.4e-2 vs 2.5e-5) and ~30% corruption of the CT observable -- and
-  // aspc_rtol has no usable window: the committed error is LINEAR in it, and tightening it toward the
-  // deck's own solve tolerance drives the accept rate to zero. Refuse by default, loudly, once.
+  // means the ACKS2 saddle. On the saddle ASPC saves little wall-clock at a large loss of charge
+  // conservation and CT accuracy, and aspc_rtol has no usable window: the committed error is LINEAR in
+  // it, and tightening it toward the deck's own solve tolerance drives the accept rate to zero. Refuse by
+  // default, loudly, once.
   if (aspc_on && !aspc_saddle_allow && !acks2_saddle_refused) {
     acks2_saddle_refused = 1;
     if (comm->me == 0)
@@ -311,17 +309,17 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
     // exact BO, exactly as if aspc had never been requested
     matvecs = acks2_use_minres ? acks2_minres(b_s, s) : BiCGStab(b_s, s);
   } else if (aspc_on) {
-    // ★ ASPC (#16) — OPERATIVE hook for fix qeq/sam. The ACKS2 augmented solve is ALREADY q-direct
-    // (atom->q[i] = s[i]; init_matvec already predicts s), so the prototype's s/t-cancellation problem does
+    // ★ ASPC — OPERATIVE hook for fix qeq/sam. The ACKS2 augmented solve is ALREADY q-direct
+    // (atom->q[i] = s[i]; init_matvec already predicts s), so the s/t-cancellation problem does
     // NOT apply. ASPC = cap BiCGStab at n_corr iterations + omega-damp toward the predictor, store corrected
-    // s (calculate_Q backs it up). UNTESTED draft (session 21) — verify on a water-NVE energy-drift test.
-    // NOTE: predictor currently = the existing cubic (4,-6,4,-1) coeffs (polynomial-exact); the ASPC-optimal
-    // time-reversible coeffs (aspc_B) are an optional refinement if the cubic+omega drifts.
+    // s (calculate_Q backs it up).
+    // NOTE: the predictor is the cubic (4,-6,4,-1) extrapolation (polynomial-exact); the ASPC-optimal
+    // time-reversible coeffs (aspc_B) are not used on this path.
     const int sz = 2*NN + 2;
     double *spred = new double[sz];
     for (int k = 0; k < sz; ++k) spred[k] = s[k];     // predictor (pre-solve)
     int imax_save = imax; imax = aspc_ncorr;          // corrector: n_corr solver iterations
-    // FIX (a): honour the selected saddle solver (MINRES under bondsoft) on the ASPC branch too.
+    // Honour the selected saddle solver (MINRES under bondsoft) on the ASPC branch too.
     acks2_capped = 1;
     matvecs = acks2_use_minres ? acks2_minres(b_s, s) : BiCGStab(b_s, s);
     acks2_capped = 0;
@@ -337,12 +335,10 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
     }
     for (int i = 0; i < 2; ++i) s[2*NN + i] = w*s[2*NN + i] + (1.0 - w)*spred[2*NN + i];  // 2 constraint rows
 
-    // ---- FIX (b): ACCEPT/REJECT GATE -- the contract the CG path has always had ------------------
-    // Previously this branch COMMITTED the omega-mixed result of an n_corr-iteration solve
-    // UNCONDITIONALLY. On the saddle, n_corr=2 iterations of an indefinite KKT
-    // system reduces the residual hardly at all, so an unconverged correction was committed every step,
-    // compounded, and the solve ran away: measured q_total = -190.9 e on a 1727-atom box whose true
-    // total is -1 e, diverging by step 5-6 with per-atom charges still looking innocuous.
+    // ---- ACCEPT/REJECT GATE -- the same contract as the CG path ------------------------------------
+    // On the saddle, n_corr=2 iterations of an indefinite KKT system reduce the residual hardly at all;
+    // committing the omega-mixed result unconditionally would compound an unconverged correction every
+    // step until the total charge runs away, while per-atom charges still look innocuous.
     // Mirrors FixQEqSam's projected-CG corrector: accept only if the correction is BOTH non-runaway AND
     // actually converged; otherwise fall through to the exact (uncapped) Born-Oppenheimer solve. The 4.0
     // e threshold is the CG path's own default (lr_qfreeze lives in the derived class, out of scope here).
@@ -355,14 +351,13 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
     }
     MPI_Allreduce(MPI_IN_PLACE, &mq, 1, MPI_DOUBLE, MPI_MAX, world);
 
-    // (adjudication D2): the gate must bound what is actually COMMITTED. Testing `rresid` alone was
-    // wrong: residual(w*s + (1-w)*s_pred) = w*r_s + (1-w)*r_pred, and r_pred was never bounded. That hole
-    // is what produced the "second defect" -- MINRES converged (r_s ~ 0), the gate passed, and the mix was
-    // garbage. Re-capping MINRES only restored an accidental correlation between r_s and r_pred; this
-    // closes it. Both residuals are already computed by both solvers, so this costs ZERO extra matvecs.
+    // The gate must bound what is actually COMMITTED. `rresid` alone is not enough:
+    // residual(w*s + (1-w)*s_pred) = w*r_s + (1-w)*r_pred, and r_pred must be bounded too (a converged
+    // r_s ~ 0 says nothing about the mix). Both residuals are already computed by both solvers, so this
+    // costs ZERO extra matvecs.
     const double rcommit = w*rresid + (1.0 - w)*acks2_relresid0;   // triangle-inequality bound on the mix
     if (mq < 4.0 && rcommit < aspc_rtol) {
-      aspc_naccept++;                                 // SOLVER-DIAG acc/rej -- now live on the saddle too
+      aspc_naccept++;                                 // SOLVER-DIAG acc/rej on the saddle
     } else {
       aspc_nreject++;
       for (int k = 0; k < sz; ++k) s[k] = spred[k];   // discard the bad correction, restart from the predictor
@@ -372,20 +367,17 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
     delete[] spred;
   } else {
     matvecs = acks2_use_minres ? acks2_minres(b_s, s)   // robust indefinite-saddle solver (bond-softness)
-                               : BiCGStab(b_s, s);       // default BiCGStab (byte-identical); Born-Oppenheimer
+                               : BiCGStab(b_s, s);       // default BiCGStab; Born-Oppenheimer
   }
 
-  // ---- : NEVER COMMIT A GROSSLY UNCONVERGED UNCAPPED SOLVE ------------------------------------------
-  // BiCGStab's exit on exhausting imax was a WARNING followed by calculate_Q() on whatever iterate it held;
-  // only the |q-q0|>50 e tripwire stood between that and the trajectory. Measured on a Li box
-  // (mode2_libox, ion-state Li row): diag-BiCGStab at 1000 matvecs,
-  // resid/b = 3.1, committed q_total +0.0796 e and PE +9956 eV (true: -194) as a "converged" step -- garbage
-  // that passed the tripwire. The same operator converges in 14 matvecs under the ILU preconditioner (a
-  // preconditioner cannot change the answer), so: escalate once via saddle_fallback(), then refuse. The 10x
-  // band tolerates BiCGStab's early-exit quirk (resid 1.3e-5 at tol 1e-5 is a normal converged exit; see the
-  // A7 note in BiCGStab) and catches every gross failure in the measured set (0.3, 3.1, 4e3).
+  // ---- NEVER COMMIT A GROSSLY UNCONVERGED UNCAPPED SOLVE ------------------------------------------------
+  // BiCGStab exhausting imax would otherwise be a WARNING followed by calculate_Q() on whatever iterate it
+  // holds, and such an iterate can pass the |q-q0|>50 e tripwire while being badly wrong (e.g. an ion-bearing
+  // box under the diagonal preconditioner, where the same operator converges quickly under ILU -- a
+  // preconditioner cannot change the answer). So: escalate once via saddle_fallback(), then refuse. The 10x
+  // band tolerates BiCGStab's early-exit quirk (see the note in BiCGStab) and catches gross failures.
   // The gate keys on acks2_exhausted (budget exhausted or breakdown) AND the residual: BiCGStab's early exit can
-  // report 1.8e-4 at tol 1e-5 on a converged solve (17/34 goldens did, under ILU), which is not a failure.
+  // report ~1e-4 at tol 1e-5 on a converged solve, which is not a failure.
   {
     const double gross = 10.0 * tolerance;
     if (acks2_exhausted && acks2_relresid > gross) {     // exhausted/breakdown AND grossly off (see acks2_exhausted)
@@ -403,13 +395,10 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
     }
   }
 
-  // SOLVER-DIAG on the saddle path. The CG path has printed this since #28, but the ACKS2 saddle
-  // printed nothing, so the campaign-wide "watch the ASPC acc/rej
-  // counter" rule was unenforceable exactly where it was needed: the counters read 0/0, indistinguishable
-  // from ASPC being off. A permanently-rejecting corrector (every step falling through to the full solve)
-  // is now visible as acc/rej = 0/N.
+  // SOLVER-DIAG on the saddle path, as on the CG path. A permanently-rejecting corrector (every step
+  // falling through to the full solve) is visible as acc/rej = 0/N.
   if (comm->me == 0 && (update->ntimestep == 0 || update->ntimestep % 200 == 0)) {
-    if (aspc_on && aspc_saddle_allow)   // : a REFUSED aspc would print a permanent 0/0 and read as "dead ASPC"
+    if (aspc_on && aspc_saddle_allow)   // a REFUSED aspc would print a permanent 0/0 and read as "dead ASPC"
 
       utils::logmesg(lmp, "samqeq SOLVER-DIAG step {}: {} {} matvecs, resid/b={:.2e}, ASPC acc/rej={}/{}\n",
                      update->ntimestep, acks2_use_minres ? "saddle-MINRES" : "saddle-BiCGStab",
@@ -549,21 +538,21 @@ int FixACKS2Sam::BiCGStab(double *b, double *x)
   rnorm = parallel_norm(r, nn);
 
   if (bnorm == 0.0) bnorm = 1.0;
-  acks2_relresid0 = rnorm / bnorm;   // : residual of the ENTRY guess x0 (= the ASPC predictor)
+  acks2_relresid0 = rnorm / bnorm;   // residual of the ENTRY guess x0 (= the ASPC predictor)
   vector_copy(r_hat, r, nn);
   omega = 1.0;
   rho = 1.0;
 
-  // #12: BiCGStab breakdown RESTART. The ACKS2 saddle is indefinite + moderately ill-conditioned;
+  // BiCGStab breakdown RESTART. The ACKS2 saddle is indefinite + moderately ill-conditioned;
   // the parallel-reduction order (np-dependent) can drive the shadow residual r_hat ⊥ r -> rho/omega = 0
-  // -> the classic BiCGStab breakdown (seen at np=2 on benzene/Au; np=1/4/6 converge on the SAME operator).
+  // -> the classic BiCGStab breakdown (it can occur at one rank count and not at another on the SAME operator).
   // The cure is to RE-ANCHOR r_hat = r and continue (not give up with a wrong x). Only triggers on exact
-  // breakdown, so converging solves (all bit-tests, np=1) are byte-identical.
-  // A7/R3 dimension note: rnorm/bnorm is a ratio of norms of the SAME augmented [q;u;rows] vector
+  // breakdown, so converging solves are unaffected.
+  // Dimension note: rnorm/bnorm is a ratio of norms of the SAME augmented [q;u;rows] vector
   // space (residual vs RHS). The dominant chi-block scales together in numerator and denominator
   // (ratio unit-invariant), so unlike the base-class CG (e/sqrt(E)) no ev_scale factor is derivable
-  // here; the sub-dominant charge-block admixture is a pre-existing norm inhomogeneity (present in
-  // metal too). Left UNSCALED by design -- see "Applied ".
+  // here; the sub-dominant charge-block admixture is a norm inhomogeneity (present in metal too).
+  // Left UNSCALED by design.
   int nrestart = 0; const int maxrestart = 8; bool fresh = true;
   for (i = 1; i < imax && rnorm / bnorm > tolerance; ++i) {
     rho = parallel_dot(r_hat, r, nn);
@@ -600,9 +589,9 @@ int FixACKS2Sam::BiCGStab(double *b, double *x)
     tmp = parallel_dot(q, q, nn);
 
     // early convergence check
-    // A7 note: tmp = |q|^2 (SQUARED, unnormalized) vs the linear-scale tolerance -- a pre-existing
-    // dimensional oddity inherited from fix acks2/reaxff (already inconsistent in metal units).
-    // Left verbatim: mechanical unit-scaling cannot fix it and any change breaks metal byte-id.
+    // Note: tmp = |q|^2 (SQUARED, unnormalized) vs the linear-scale tolerance -- a dimensional
+    // oddity inherited from fix acks2/reaxff (inconsistent in metal units too). Kept as in
+    // fix acks2/reaxff: mechanical unit-scaling cannot fix it.
     if (tmp < tolerance) {
       vector_add(x, alpha, d, nn);
       break;
@@ -635,15 +624,15 @@ int FixACKS2Sam::BiCGStab(double *b, double *x)
     rho_old = rho;
   }
 
-  acks2_relresid = rnorm / bnorm;   // : expose the solve quality so the ASPC corrector can be gated on it
-  acks2_exhausted = (omega == 0 || rho == 0 || i >= imax) ? 1 : 0;   // : failure signature for the no-commit gate
+  acks2_relresid = rnorm / bnorm;   // expose the solve quality so the ASPC corrector can be gated on it
+  acks2_exhausted = (omega == 0 || rho == 0 || i >= imax) ? 1 : 0;   // failure signature for the no-commit gate
 
   if (comm->me == 0) {
     if (omega == 0 || rho == 0) {
       error->warning(FLERR,"Fix acks2/reaxff BiCGStab numerical breakdown, omega = {:.8}, rho = {:.8}",
                       omega,rho);
     } else if (i >= imax && !acks2_capped) {
-      // : inside the ASPC corrector the cap (imax = aspc_ncorr) is BY DESIGN, so "failed after n
+      // Inside the ASPC corrector the cap (imax = aspc_ncorr) is BY DESIGN, so "failed after n
       // iterations" every step is noise, not news -- the accept/reject gate is the real signal there.
       // Gated on acks2_capped, NOT on aspc_on, so a genuine non-convergence of the uncapped
       // fall-through solve still warns even with ASPC enabled.
@@ -658,7 +647,7 @@ int FixACKS2Sam::BiCGStab(double *b, double *x)
 /* ----------------------------------------------------------------------
    MINRES (Paige–Saunders) on the symmetric-INDEFINITE ACKS2 KKT saddle (augmented size 2NN+2). The saddle is
    structurally indefinite (the constraint rows + the negative-Laplacian X-block), so plain BiCGStab breaks down
-   (rho=0) — exactly the failure seen for the bond-softness X-block. MINRES is
+   (rho=0), notably with the bond-softness X-block. MINRES is
    designed for symmetric-indefinite systems and is the robust cure. Unpreconditioned (the diagonal Jacobi precon
    is itself indefinite via Xdia_inv<0). Adapted from FixQEqSam::qeq_minres, generalized to the augmented vector.
    Matvec is the VIRTUAL sparse_matvec_acks2 (FixQEqSam adds the reciprocal): input in `d` (forward pack_flag=1),
@@ -678,21 +667,19 @@ int FixACKS2Sam::acks2_minres(double *b, double *x)
     r[NN+i]=b[NN+i]-z[NN+i]; q[NN+i]=r[NN+i]; p[NN+i]=0.0; q_hat[NN+i]=0.0; } }
   if (last_rows_flag){ for(int k=2*NN;k<2*NN+2;k++){ r[k]=b[k]-z[k]; q[k]=r[k]; p[k]=0.0; q_hat[k]=0.0; } }
   double beta1 = sqrt(parallel_dot(q, q, nn));
-  // (adjudication D4): report/gate on ||r||/||b||, the SAME normalisation BiCGStab uses. phibar/beta1 is
-  // ||r_k||/||r_0||, which for a warm start is a DIFFERENT quantity -- comparing both against one aspc_rtol
-  // was an apples-to-oranges test, and the SOLVER-DIAG label "resid/b" was simply wrong for MINRES.
-  // The loop's CONVERGENCE test below is deliberately left as phibar/beta1 so this stays byte-identical.
+  // Report/gate on ||r||/||b||, the SAME normalisation BiCGStab uses. phibar/beta1 is ||r_k||/||r_0||,
+  // which for a warm start is a DIFFERENT quantity, so it cannot share one aspc_rtol with BiCGStab.
+  // The loop's CONVERGENCE test below deliberately stays phibar/beta1.
   double bnorm_m = parallel_norm(b, nn); if (bnorm_m == 0.0) bnorm_m = 1.0;
   if (beta1 == 0.0) { acks2_relresid = 0.0; acks2_relresid0 = 0.0; return 0; }   // exact warm start
   acks2_relresid0 = beta1 / bnorm_m;   // residual of the ENTRY guess x0 (= the ASPC predictor)
   double beta=beta1, oldb=0.0, dbar=0.0, epsln=0.0, phibar=beta1, cs=-1.0, sn=0.0;
   int it = 1;
-  // : the 4000 FLOOR exists because the indefinite saddle needs more iters than the QEq H-block -- but it
-  // must not override the ASPC corrector's DELIBERATE cap (imax = aspc_ncorr). It did, and the consequence was
-  // subtle: MINRES ran to full convergence, its tiny residual passed the corrector's accept gate, and what was
-  // then COMMITTED was the omega-MIXED vector w*solution + (1-w)*predictor -- far from the solution whenever the
-  // predictor is cold. Measured: PE -250.7 at step 0 then +6049 by step 20, accepted every step, no guard tripped.
-  // BiCGStab never showed this because it honours the cap, fails the gate, and falls through to the exact solve.
+  // The 4000 FLOOR exists because the indefinite saddle needs more iters than the QEq H-block -- but it
+  // must not override the ASPC corrector's DELIBERATE cap (imax = aspc_ncorr): a fully converged MINRES
+  // would pass the corrector's accept gate while what is COMMITTED is the omega-MIXED vector
+  // w*solution + (1-w)*predictor -- far from the solution whenever the predictor is cold. Honouring the
+  // cap makes MINRES behave like BiCGStab: fail the gate and fall through to the exact solve.
   const int cap = acks2_capped ? imax : ((imax < 4000) ? 4000 : imax);
   for (; it <= cap; it++) {
     double sca = 1.0/beta;                                            // v = r2/beta -> d (matvec input)
@@ -725,16 +712,15 @@ int FixACKS2Sam::acks2_minres(double *b, double *x)
       double w2 =(d[NN+i]-oldeps*q_hat[NN+i]-delta*p[NN+i])*denom; q_hat[NN+i]=p[NN+i]; p[NN+i]=w2; x[NN+i]+=phi*w2; } }
     if (last_rows_flag){ for(int k=2*NN;k<2*NN+2;k++){
       double wk=(d[k]-oldeps*q_hat[k]-delta*p[k])*denom; q_hat[k]=p[k]; p[k]=wk; x[k]+=phi*wk; } }
-    // A7/R3 dimension note: phibar/beta1 = ||resid||/||b|| over the SAME augmented [q;u;rows] vector space
+    // Dimension note: phibar/beta1 = ||resid||/||b|| over the SAME augmented [q;u;rows] vector space
     // (unpreconditioned) -- same "ratio unit-invariant, no ev_scale factor derivable" analysis as the
     // BiCGStab rnorm/bnorm criterion above. Left UNSCALED by design. 1e-300 = IEEE underflow guard.
     if (phibar/beta1 <= tolerance || beta <= 1.0e-300) break;
   }
-  acks2_relresid = phibar / bnorm_m;  // : ||r||/||b||, same normalisation as BiCGStab (D4)
-  acks2_exhausted = (it > cap) ? 1 : 0;   // : failure signature for the no-commit gate
-  // (adjudication D1): gate on acks2_capped. Making MINRES honour the ASPC cap made `it > cap` true on
-  // EVERY capped corrector call, so this warned ~97 times in 200 steps and tripped LAMMPS's 100-warning
-  // budget -- silencing every genuine warning for the rest of the run. A by-design cap is not news.
+  acks2_relresid = phibar / bnorm_m;  // ||r||/||b||, same normalisation as BiCGStab
+  acks2_exhausted = (it > cap) ? 1 : 0;   // failure signature for the no-commit gate
+  // Gate on acks2_capped: `it > cap` is true on EVERY capped corrector call, and warning there would
+  // exhaust LAMMPS's warning budget and silence genuine warnings. A by-design cap is not news.
   if (it > cap && !acks2_capped && comm->me == 0)
     error->warning(FLERR, "samqeq ACKS2 MINRES did not converge ({} iters, resid/b={:.2e}) at step {}",
                    it, phibar/beta1, update->ntimestep);
@@ -969,7 +955,7 @@ void FixACKS2Sam::grow_arrays(int nmax)
 {
   memory->grow(s_hist,nmax,nprev,"acks2:s_hist");
   memory->grow(s_hist_X,nmax,nprev,"acks2:s_hist_X");
-  memory->grow(q_hist,nmax,6,"acks2:q_hist");   // ASPC (#16): q-history (this is the grow_arrays actually called
+  memory->grow(q_hist,nmax,6,"acks2:q_hist");   // ASPC: q-history (this is the grow_arrays actually called
                                                 // for FixQEqSam; the base FixQEqBaseSam::grow_arrays is bypassed)
 }
 
@@ -983,7 +969,7 @@ void FixACKS2Sam::copy_arrays(int i, int j, int /*delflag*/)
     s_hist[j][m] = s_hist[i][m];
     s_hist_X[j][m] = s_hist_X[i][m];
   }
-  for (int m = 0; m < 6; m++) q_hist[j][m] = q_hist[i][m];   // ASPC (#16): migrate q-history (atom sort/exchange)
+  for (int m = 0; m < 6; m++) q_hist[j][m] = q_hist[i][m];   // ASPC: migrate q-history (atom sort/exchange)
 }
 
 /* ----------------------------------------------------------------------
@@ -994,7 +980,7 @@ int FixACKS2Sam::pack_exchange(int i, double *buf)
 {
   for (int m = 0; m < nprev; m++) buf[m] = s_hist[i][m];
   for (int m = 0; m < nprev; m++) buf[nprev+m] = s_hist_X[i][m];
-  for (int m = 0; m < 6; m++) buf[2*nprev+m] = q_hist[i][m];   // ASPC (#16): migrate q-history
+  for (int m = 0; m < 6; m++) buf[2*nprev+m] = q_hist[i][m];   // ASPC: migrate q-history
   return nprev*2 + 6;
 }
 
@@ -1006,7 +992,7 @@ int FixACKS2Sam::unpack_exchange(int nlocal, double *buf)
 {
   for (int m = 0; m < nprev; m++) s_hist[nlocal][m] = buf[m];
   for (int m = 0; m < nprev; m++) s_hist_X[nlocal][m] = buf[nprev+m];
-  for (int m = 0; m < 6; m++) q_hist[nlocal][m] = buf[2*nprev+m];   // ASPC (#16): migrate q-history
+  for (int m = 0; m < 6; m++) q_hist[nlocal][m] = buf[2*nprev+m];   // ASPC: migrate q-history
   return nprev*2 + 6;
 }
 

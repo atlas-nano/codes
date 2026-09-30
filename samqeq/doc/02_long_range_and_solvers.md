@@ -16,7 +16,7 @@ fix chg FQ qeq/sam 1 0.0 10.0 1.0e-6 water.param
 
 `special_bonds` weights do not change the net coul/long + coul/shield/intra Hamiltonian; they only change how it is
 split between the two styles (exact with `pair_modify table 0`, 1e-7 relative with the default table). Under a kspace
-style even `lj 0 coul 0` is legal: LAMMPS keeps those bonded pairs in the list with factor 0 (s88b). The pair refuses
+style even `lj 0 coul 0` is legal: LAMMPS keeps those bonded pairs in the list with factor 0. The pair refuses
 only the no-kspace 0/0 case, where the pairs really are dropped, and `neigh_modify exclude molecule/intra` (the
 excluded intramolecular pairs lose the shielded correction and their solve coupling while kspace still sums them).
 Other exclusions are allowed; fix gcmc/widom/charge-regulation rely on an internal group exclusion.
@@ -53,7 +53,7 @@ and Rick's raw parameters, `lr_ewald=1` gives liquid μ=2.635 ± 0.002 D (eight 
 
 ## The shielding kernel (`fix_modify <id> shield ...`)
 
-The off-diagonal `J(r)` used by `lr_ewald>=2` (and the legacy gas path) has three interchangeable forms:
+The off-diagonal `J(r)` used by `lr_ewald>=2` (and the short-range gas path) has three interchangeable forms:
 
 ```
 fix_modify chg shield cbrt # default: J(r) = 1/cbrt(r^3 + 1/gamma^3) -> 1/r; param col 4 = gamma
@@ -123,7 +123,7 @@ ridge regularizes it:
 
 | Directive | Effect |
 |-----------|--------|
-| `ridge off` | Legacy discrete ×4 escalation (default-ish). |
+| `ridge off` | Discrete ×4 ridge escalation. |
 | `ridge eig <floor> [<m>] [<every>] [<delta>]` | **Recommended for hard systems.** An `m`-step Lanczos estimate of the smallest eigenvalue λ_min preconditions the diagonal so `λ_min(A+ridge) ≥ floor` — continuous through criticality (smooth charges/forces). E.g. `ridge eig 1.0 16`. The optional `<every>` (default 1) **recomputes λ_min only every N steps** — see the performance note below. The optional `<delta>` (default 0) is the estimate-error budget — see *The estimate is an upper bound* below. |
 | `ridge <q_onset> <gain>` | Smooth max\|q\| ramp. |
 | `ridge local <q_onset> <factor>` | Per-atom ratchet ridge (bounds a single close-pair catastrophe without touching the bulk). |
@@ -138,13 +138,13 @@ Rule of thumb: a +2 ion in water or a dense metal ⇒ add `ridge eig 1.0 16` (or
 > estimate is still moving). Two defences: raise `m` (**`m ≥ 60` for interface cells**; `m` is capped at 200, with a
 > warning), and set `<delta>` to the estimate error you measured in an `m` scan. The ridge then targets
 > `floor + delta`, so `λ_min(A+ridge) = floor + (delta − error) ≥ floor` whenever the error is within `delta`.
-> `delta = 0` is the legacy behaviour, bit for bit.
+> `delta = 0` targets `floor` itself.
 
 > **Performance — cache the Lanczos λ_min.** Each `ridge eig` step costs `m` extra matvecs (each a PPPM FFT) just
 > to estimate λ_min — on top of the actual solve. But λ_min varies *slowly* with configuration, so it need not be
 > recomputed every step. `ridge eig 1.0 16 10` recomputes it **every 10 steps** instead: a 512-water NVE runs
-> **~1.5× faster (3:00 → 2:00) with byte-for-byte the same energy drift**. The default `every=1` keeps the legacy
-> every-step behaviour (and is exactly bit-reproducible). A stale λ_min that under-bounds a sudden near-critical
+> **~1.5× faster (3:00 → 2:00) with byte-for-byte the same energy drift**. The default `every=1` recomputes it
+> every step (and is exactly bit-reproducible). A stale λ_min that under-bounds a sudden near-critical
 > config is caught by the adaptive re-solve + the CG→MINRES auto-fallback, so larger cadences stay safe.
 > *(ASPC, below, skips the Lanczos entirely — it sets the ridge from the base value.)*
 
@@ -189,7 +189,7 @@ adaptive-ridge solve (which also re-seeds the predictor history with the exact c
 
 *(512-water SPC-FQ NVE, lr_ewald=2; ~3.4× wall-clock vs full BO since it also skips the per-step `ridge eig`
 Lanczos.)* Watch `SOLVER-DIAG` drop from ~17 iters to ~2 once the history fills (after `k+2` steps).
-Regression: `tests/cases/aspc_corrector`.
+Test case: `tests/cases/aspc_corrector`.
 
 ## Energy-conserving charge dynamics (XL)
 
@@ -213,7 +213,7 @@ package omp 4
 fix chg all qeq/sam 1 0.0 10.0 1.0e-6 sys.param # unchanged
 ```
 
-It is **grain-gated**: below ~4096 atoms/rank the original serial loops run untouched (small cells measured
+It is **grain-gated**: below ~4096 atoms/rank the serial loops run unchanged (small cells measured
 36% *slower* under naive threading, because fork/join overhead swamps tiny loop bodies), so small/
 medium decks should expect **no change**. Results at `nthreads>1` are deterministic run-to-run at a *fixed*
 thread count (`schedule(static)` + thread-ordered reductions) but **not** bit-identical to the serial path or to

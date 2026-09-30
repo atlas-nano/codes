@@ -5,19 +5,16 @@
    `-sf kk` run (or an explicit `fix ... qeq/sam/kk ...`) gets a Kokkos-aware
    charge fix instead of the bare CPU FixQEqSam.
 
-   PHASE 2 (milestone 1, "make it RUN under -sf kk"): the charge solve + PPPM
-   reciprocal still execute on the HOST (samQEq's solve is large + the
-   reciprocal goes through the CPU PPPMSamqeq), but the neighbor lists are now
-   NATIVE Kokkos lists (the plain CPU requests segfaulted the kk neighbor
-   build — copy_to_cpu null listcopy — because samQEq's fix requests are not
-   paired with a kokkos parent; see). We request
-   kokkos FULL lists and, each solve, mirror their d_ilist/d_numneigh/
-   d_neighbors down to host and populate the legacy ilist/numneigh/firstneigh
-   the inherited host solve reads — a controlled copy_to_cpu that cannot hit
-   the framework's null-listcopy bug. Atom data is synced Host before the
-   solve and q is marked modified(Host) after. Subsequent milestones move
-   compute_H and the matvec onto the device (Phase 2-full) and the reciprocal
-   into pppm/samqeq/kk (Phase 3).
+   By default the charge solve runs on the HOST through the inherited
+   FixQEqSam solve. The neighbor lists are NATIVE Kokkos lists: plain CPU
+   requests from this fix are not paired with a kokkos parent, so the kk
+   neighbor build cannot serve them. We request kokkos FULL lists and, each
+   solve, mirror their d_ilist/d_numneigh/d_neighbors down to host and populate
+   the host ilist/numneigh/firstneigh the inherited solve reads (a controlled
+   copy_to_cpu). Atom data is synced Host before the solve and q is marked
+   modified(Host) after. `fix_modify <id> devsolve on` moves the matvec and
+   the Krylov solve onto the device; the reciprocal runs in pppm/samqeq/kk
+   when that kspace style is in use.
 ------------------------------------------------------------------------*/
 
 #ifdef FIX_CLASS
@@ -38,9 +35,9 @@ FixStyle(qeq/sam/kk/host,FixQEqSamKokkos<LMPHostType>);
 
 namespace LAMMPS_NS {
 
-template<class DeviceType> class PPPMSamqeqKokkos;   // device reciprocal (Phase 3b)
+template<class DeviceType> class PPPMSamqeqKokkos;   // device reciprocal
 
-// S1 (Phase 2-full): matrix-free device matvec of the short-range DSF H-block.
+// S1: matrix-free device matvec of the short-range DSF H-block.
 struct TagSamMatvecH {};
 // S2: matrix-free device matvec of the ACKS2 X-block.
 struct TagSamMatvecX {};
@@ -49,21 +46,19 @@ struct TagSamMatvecFull {};
 // S8: q-direct off-diagonal H-block for the Ewald path (lr_ewald=2): net J_shield = fully-shielded
 // 1/∛(r³+1/g³) minus erf(αr)/r (the reciprocal adds erf(αr)/r back). Distinct from TagSamMatvecH (taper/DSF).
 struct TagSamMatvecHErfc {};
-// (#30): STORED-H form of the same operator. TagSamBuildHErfc evaluates each pair's H once per
+// STORED-H form of the same operator. TagSamBuildHErfc evaluates each pair's H once per
 // SOLVE into d_Hval; TagSamSpMV then applies it per CG iteration as a plain memory-bound product.
 struct TagSamBuildHErfc {};
 struct TagSamSpMV {};
 
 /* ---------------------------------------------------------------------------------------------
-   (#30): SMALL launch functors for the two hot kernels.
+   SMALL launch functors for the two hot kernels.
 
-   ★ Why this exists at all. Every kernel in this file used to be launched as
-   `parallel_for(policy, *this)`, and the fix object carries `std::vector<int> hb_neigh` /
-   `hbf_neigh` — the HOST-mirrored neighbour lists, ~141 MB at 29k atoms. Kokkos copies the functor
-   BY VALUE, so each launch deep-copied those vectors on the host: measured 137 ms per device matvec
-   at 29k atoms, i.e. ~2 GB/s where the card does ~200, and it made the matrix-free and stored-H
-   variants perform identically because the copy dwarfed both. `copymode` protects the destructor
-   from freeing shared pointers; it does nothing about the std::vector members.
+   The fix object carries `std::vector<int> hb_neigh` / `hbf_neigh`, the HOST-mirrored neighbour
+   lists (~141 MB at 29k atoms). Kokkos copies a functor BY VALUE, so launching
+   `parallel_for(policy, *this)` would deep-copy those vectors on the host at every launch and
+   dominate the cost of the kernel. `copymode` protects the destructor from freeing shared
+   pointers; it does nothing about the std::vector members.
 
    These structs carry only Views and scalars, so a launch copies a few hundred bytes.
    SamShieldKernel keeps ONE implementation of the shielding kernel for both of them (and mirrors
@@ -192,7 +187,7 @@ class FixQEqSamKokkos : public FixQEqSam {
 
   void init() override;
   void init_list(int, class NeighList *) override;
-  void post_run() override;   // (#30): print the device-matvec phase timings (SAMQEQ_KK_TIME=1)
+  void post_run() override;   // print the device-matvec phase timings (SAMQEQ_KK_TIME=1)
   // BO charge-solve hooks
   void setup_pre_force(int) override;
   void pre_force(int) override;
@@ -212,12 +207,12 @@ class FixQEqSamKokkos : public FixQEqSam {
 
   // S6 production wiring: when enabled + eligible, replace the host BiCGStab with the device
   // solve (result -> s; the host calculate_Q then sets q). `fix_modify <id> devsolve on|off`
-  // gates it (default OFF -> M1 byte-identical). GPU reductions are not bit-reproducible, so the
+  // gates it (default OFF -> byte-identical to the host solve). GPU reductions are not bit-reproducible, so the
   // engaged path is tolerance-accurate, not byte-identical -> opt-in.
   int BiCGStab(double *, double *) override;
   int modify_param(int, char **) override;
 
-  // S9/Stage-3 production wiring: route the lr_ewald=2 q-direct CG (the plain BO solve AND the ASPC
+  // S9 production wiring: route the lr_ewald=2 q-direct CG (the plain BO solve AND the ASPC
   // corrector both call qeq_cg) to the device solver when `devsolve on` + eligible. Default OFF -> host.
   int qeq_cg(double *b, double *x) override;
 
@@ -228,15 +223,13 @@ class FixQEqSamKokkos : public FixQEqSam {
   // private/protected member function (the enclosing function's access must be public).
   int run_device_bicgstab(double *b_host, double *x_out);
 
-  /* ---- (#30): serve coulomb_field from the device, and then skip the host CSR H entirely ----
-     coulomb_field() computes P(H·x + recip·x) — the q0 reference-charge field, which qeq_solve() needs
-     on EVERY step whenever any type carries q0 (types 6-11 do on the electrolyte decks: the ions, Li+
-     at +1.0). It was the last per-step consumer of the host CSR H, and the reason skipping the host
-     compute_H moved the charges by 2.1e-5: the field was being built from the PREVIOUS step's matrix.
-     Found by breakpointing csr_matvec_add past the 9 setup calls and reading the backtrace. With it on
-     device, nothing on the host reads H under a device solve, so host_H_needed() can finally say no —
-     worth 2.3x, since the host build is ~23M erf/erfc evaluations on one core (the device does the same
-     matrix in 56 ms).*/
+  /* ---- serve coulomb_field from the device, so the host CSR H can be skipped entirely ----
+     coulomb_field() computes P(H·x + recip·x), the q0 reference-charge field, which qeq_solve() needs
+     on EVERY step whenever any type carries q0. It is the only per-step host consumer of the CSR H
+     besides the solve itself; serving it from the device means nothing on the host reads H under a
+     device solve, so host_H_needed() can return false and the host skips its compute_H (a serial
+     erf/erfc build over every pair). Skipping compute_H while any host reader remains would build the
+     field from the PREVIOUS step's matrix.*/
   void coulomb_field(double *x, double *out, bool project = true) override;
 
   bool host_H_needed() override {
@@ -255,13 +248,13 @@ class FixQEqSamKokkos : public FixQEqSam {
   // (TagSamMatvecH) + reciprocal (HOST add_reciprocal bounce, correctness-first) + S7 project_neutral.
   // x is the per-atom input (local group filled); ghosts are filled internally by a host forward_comm.
   // PUBLIC: launches device parallel_fors. Scalar ridge only.
-  // (#30): with_diag=false drops the η diagonal, giving exactly FixQEqSam::coulomb_field's
+  // with_diag=false drops the η diagonal, giving exactly FixQEqSam::coulomb_field's
   // operator P(H·x + recip·x); with_proj=false skips the projector (coulomb_field's `project` arg).
   void qeq_matvec_device(Kokkos::View<double *, DeviceType> x, Kokkos::View<double *, DeviceType> out,
                          bool with_diag = true, bool with_proj = true);
 
   // ---- add the PPPM reciprocal to out's s-block in place, mirroring FixQEqSam::add_reciprocal ----
-  // (#30): all-device when the kspace is pppm/samqeq/kk (stash device q, feed the trial charges,
+  // All-device when the kspace is pppm/samqeq/kk (stash device q, feed the trial charges,
   // device compute_vector, restore); host round trip otherwise. PUBLIC: hosts extended device lambdas.
   void device_add_reciprocal(Kokkos::View<double *, DeviceType> in,
                              Kokkos::View<double *, DeviceType> out);
@@ -280,14 +273,11 @@ class FixQEqSamKokkos : public FixQEqSam {
   KOKKOS_INLINE_FUNCTION
   void operator()(TagSamMatvecHErfc, const int &ii) const;
 
-  /* ---- (#30): store H once per solve, then apply it. ------------------------------------
-     The device matvec was MATRIX-FREE while the host solve is MATRIX-BASED: FixQEqSam::compute_H
-     evaluates each pair's kernel ONCE per step into a CSR matrix and every CG iteration is then a
-     cheap sparse product, whereas TagSamMatvecHErfc re-evaluated erf/erfc/pow for all ~800
-     neighbours of every atom on EVERY iteration. At the 7-23 iterations these decks take that is an
-     order of magnitude more transcendental work, and it is why one GPU matvec (29 ms at 29k atoms)
-     lost to one CPU core (12 ms) doing the same physics. Same fix as fix qeq/reaxff/kk: build, then
-     apply. d_Hval mirrors the neighbour list's own (i, slot) layout, so no column index is stored —
+  /* ---- store H once per solve, then apply it. ----------------------------------------------
+     The matrix-free functor TagSamMatvecHErfc re-evaluates erf/erfc/pow for every neighbour of every
+     atom on EVERY CG iteration; the host solve instead evaluates each pair's kernel ONCE into a CSR
+     matrix and each iteration is a cheap sparse product. The stored form does the same on the
+     device (as fix qeq/reaxff/kk does): build, then apply. d_Hval mirrors the neighbour list's own (i, slot) layout, so no column index is stored —
      the SpMV reads d_neighbors for j, exactly as the build did.
      Falls back to the matrix-free functor automatically if the allocation does not fit (hmat_ok).*/
   // team/vector shape (mirrors fix_qeq_reaxff_kokkos.h's constants for the same kernel)
@@ -310,17 +300,14 @@ class FixQEqSamKokkos : public FixQEqSam {
   KOKKOS_INLINE_FUNCTION
   void operator()(TagSamMatvecFull, const int &ii) const;
 
-  /* ---- : the shielding kernel ON DEVICE (cbrt / PQEq Gaussian / Slater) ----------------
+  /* ---- the shielding kernel ON DEVICE (cbrt / PQEq Gaussian / Slater) ----------------------
      Device mirror of FixQEqSam::shielded_coulomb()'s three branches (fix_qeq_sam.cpp), i.e. the
-     NET short-range kernel the lr_ewald=2 H-block is built from. Until the device H
-     functors hardcoded cbrt and every non-cbrt deck fell back to the host solve entirely
-     ("NOT ported"); pqeq is the standing kernel for the
-     electrolyte campaigns, so that fallback covered essentially all production decks.
+     NET short-range kernel the lr_ewald=2 H-block is built from.
      Arithmetic is transcribed expression-for-expression from the host so the S8/S9 device-vs-host
      self-checks stay at round-off (the CUDA erf() may differ from libm's by ~1 ulp; that is what
-     the tolerance-based check is for -- these paths were never bit-identical anyway, see the S6
-     note in this header). NOT mirrored here: the two kernel MODIFIERS the host applies after the
-     branch -- iondamp (Tang-Toennies) -- which device_kernel_ok() below excludes.*/
+     the tolerance-based check is for -- these paths are not bit-identical, see the S6 note in this
+     header). NOT mirrored here: the kernel MODIFIER the host applies after the branch -- iondamp
+     (Tang-Toennies) -- which device_kernel_ok() below excludes.*/
   KOKKOS_INLINE_FUNCTION
   double dev_Jshield(int ti, int tj, double r) const
   {
@@ -372,13 +359,13 @@ class FixQEqSamKokkos : public FixQEqSam {
   void modified_after_solve();
 
   // mirror BOTH kokkos neighbor lists into fix-owned host buffers and ALIAS the
-  // lists' legacy ilist/numneigh/firstneigh onto them for the solve; restore the
+  // lists' host ilist/numneigh/firstneigh onto them for the solve; restore the
   // lists' original pointers afterwards so ~NeighList frees what it owns (else
   // double-free at exit, since the buffers below are owned by the fix)
   void alias_host_neighbor_lists();
   void restore_host_neighbor_lists();
   // mirror one kokkos NeighList's device views to host into the backing buffers,
-  // save the list's original legacy pointers, and alias the list onto the buffers
+  // save the list's original host-list pointers, and alias the list onto the buffers
   void alias_one(class NeighList *klist, std::vector<int> &h_ilist,
                  std::vector<int> &h_numneigh, std::vector<int> &h_neigh,
                  std::vector<int *> &h_first, int *&sav_ilist, int *&sav_numneigh,
@@ -392,15 +379,14 @@ class FixQEqSamKokkos : public FixQEqSam {
   std::vector<int *> hb_first;
   std::vector<int> hbf_ilist, hbf_numneigh, hbf_neigh;
   std::vector<int *> hbf_first;
-  // saved original legacy pointers, restored after each solve
+  // saved original host-list pointers, restored after each solve
   int *sav_il = nullptr, *sav_nn = nullptr;   int **sav_fn = nullptr;
   int *savf_il = nullptr, *savf_nn = nullptr;  int **savf_fn = nullptr;
   bool aliased = false, aliasedf = false;
 
-  // ---- perf: mirror CACHE for the host-mirrored neighbor lists ----
+  // ---- mirror CACHE for the host-mirrored neighbor lists ----
   // Rebuilding the mirrors (3 device->host copies + an O(sum numneigh) repack, per list) on every
-  // hook entry was the single largest cost of the kk path: ~45 MB of D2H traffic and ~4.4M element
-  // writes per call on a 3.7k-atom box, several calls per step. The mirrors only go stale when the
+  // hook entry would dominate the cost of the kk path. The mirrors only go stale when the
   // neighbor lists are REBUILT (positions moving does not change list contents), so key them on
   // neighbor->lastcall — the timestep of the last build (NeighborKokkos::build sets it) — plus
   // atom->nmax (the mirrors are sized by it) and each list's inum. Invalidated in init() because
@@ -464,11 +450,10 @@ class FixQEqSamKokkos : public FixQEqSam {
   // ---- S6: production device solve ----
   bool device_solve_on = false;          // `fix_modify <id> devsolve on` to engage (default off)
   // upload all device state the matvec/solve needs (params once-ish + atom data/lists each call)
-  // (#30): upload_device_state() ran on EVERY solve and re-created six Views (plus their host
-  // mirrors) each time — the same allocate-per-call pattern that cost 60x in the matvec. The per-TYPE
-  // arrays (tap/shld/eta/chi) are run constants; the per-ATOM ones only need resizing on nmax growth.
-  // Persistent mirrors + a run-constant stamp; the per-atom refill stays every solve (eta_diag and the
-  // compact molecule map are rebuilt by the host solve).
+  // Runs on every solve without re-creating Views: the per-TYPE arrays (tap/shld/eta/chi) are run
+  // constants, and the per-ATOM ones only need resizing on nmax growth. Persistent mirrors + a
+  // run-constant stamp; the per-atom refill stays every solve (eta_diag and the compact molecule map
+  // are rebuilt by the host solve).
   void upload_device_state();
   // host fill of the per-atom solve diagonal for d_diag (local in-group rows; ghosts/out-of-group 0)
   void fill_h_diag(typename Kokkos::View<double *, DeviceType>::host_mirror_type &h, int nmax_);
@@ -476,9 +461,9 @@ class FixQEqSamKokkos : public FixQEqSam {
   typename Kokkos::View<int *, DeviceType>::host_mirror_type h_cmol_;
   int  uds_cap = -1;          // nmax the per-atom mirrors are sized for
   bool uds_types_done = false;   // per-type constants uploaded (cleared in init())
-  // (run_device_bicgstab moved to the public section — CUDA forbids extended device lambdas inside a
+  // (run_device_bicgstab is in the public section: CUDA forbids extended device lambdas inside a
   //  non-public member function.)
-  // ---- : device shielding-kernel state (see dev_Jshield()/slater_eval() above) ----
+  // ---- device shielding-kernel state (see dev_Jshield()/slater_eval() above) ----
   // Uploaded by upload_kernel_state() from the host shield_gauss/shield_lambda/gamma/slater_tabs.
   int    s8_shield = 0;      // shield_gauss (SHIELD_CBRT/PQEQ/SLATER) at last upload
   double s8_lambda = 0.0;    // shield_lambda (PQEq λ) at last upload
@@ -490,14 +475,14 @@ class FixQEqSamKokkos : public FixQEqSam {
   int    slater_npts = 0;
   bool   slater_dev_stale = true;   // set in init() (host build_slater_tables() re-runs there), cleared
                                     // once upload_kernel_state() has re-uploaded the device copy
-  bool   kernel_dev_stale = true;   // perf: gamma/lambda/mode are RUN constants (they can only change
+  bool   kernel_dev_stale = true;   // gamma/lambda/mode are RUN constants (they can only change
                                     // through a fix_modify between runs, which is followed by init()), so
                                     // upload them once per run instead of once per matvec
 
-  // ---- perf: persistent per-matvec scratch ----
-  // qeq_matvec_device() used to allocate two std::vectors and four Kokkos mirror views per call —
-  // ~600 cudaMalloc/cudaFree pairs and 1365 synchronous cudaMemcpy in a 2-step run (nsys). Sizes only
-  // grow with atom->nmax, so hold them as members and resize on growth.
+  // ---- persistent per-matvec scratch ----
+  // qeq_matvec_device() needs two host vectors and four Kokkos mirror views; allocating them per call
+  // would cost a cudaMalloc/cudaFree pair each. Sizes only grow with atom->nmax, so hold them as
+  // members and resize on growth.
   std::vector<double> mv_hx, mv_ov;                              // host trial vector / host output
   typename Kokkos::View<double *, DeviceType>::host_mirror_type mv_hxvec, mv_hout;   // pinned-side mirrors
   int mv_cap = -1;                                               // nmax the scratch above is sized for
@@ -505,17 +490,15 @@ class FixQEqSamKokkos : public FixQEqSam {
   bool molinv_dev_stale = true;     // per-solve, not per-matvec: molinv is rebuilt by the host solve
                                     // (build_molinv) before each solve, so upload it once per solve
   // upload gamma/lambda/mode (+ the Slater tables in SLATER mode). Called from upload_device_state()
-  // and from the S1/S3 validators, which do their own (older, self-contained) uploads.
+  // and from the S1/S3 validators, which otherwise do their own self-contained uploads.
   void upload_kernel_state();
 
-  // (was device_shield_ok): the shielding MODE no longer gates the device path -- cbrt, pqeq
-  // and slater are all implemented in the device H functors now. What is still unported is the
-  // kernel MODIFIER the host applies INSIDE shielded_coulomb() after the branch: the Tang-Toennies
-  // interionic damping (lr_iondamp). It silently changed the HOST operator
-  // while the device computed the undamped kernel -- the same silent-divergence shape the shield guard was written for,
-  // and never previously guarded. Used by device_eligible()/device_qcg_eligible() (production) and by
-  // the S1/S3/S8/S9 self-checks, which skip with a one-time warning rather than compare two different
-  // operators.
+  // The shielding MODE does not gate the device path: cbrt, pqeq and slater are all implemented in the
+  // device H functors. What is not ported is the kernel MODIFIER the host applies INSIDE
+  // shielded_coulomb() after the branch: the Tang-Toennies interionic damping (lr_iondamp). With it on,
+  // the device would compute the undamped kernel while the HOST operator is damped. Used by
+  // device_eligible()/device_qcg_eligible() (production) and by the S1/S3/S8/S9 self-checks, which skip
+  // with a one-time warning rather than compare two different operators.
   bool device_kernel_ok() const { return !lr_iondamp; }
   bool shield_kk_warn_done = false;      // one-time warning latch for the skip/fallback above
   void warn_shield_kk_once();
@@ -523,30 +506,25 @@ class FixQEqSamKokkos : public FixQEqSam {
   // eligibility: the ACKS2 saddle path, lr_ewald=0 (DSF), with the default kernel (no electrode).
   // the quartic/floating-diagonal (lr_quartic), per-atom ridge (ridge_local), and the noise-free cutoff-H
   // long-range mode (lr_nrecip): the device matvec/diagonal does not implement any of these, so solving
-  // with them enabled would silently use the wrong diagonal or double-count the long range (audit C4).
-  // replaces the shield gate with device_kernel_ok() (iondamp), and adds the lr_alpha
-  // guard below.
-  // ★ lr_alpha <= 0 is REQUIRED here and is a BUG FIX, not a tightening: TagSamMatvecFull's H-block
-  // computes the LEGACY tapered short-range form (Taper·qqrd2e/∛(r³+shld)), which is what the host
-  // assembles only when lr_alpha <= 0 (FixQEqSam::compute_H's first line delegates to the base in that
-  // case). With lr_alpha > 0 the host assembles DSF (erfc/r − e_shift − r·f_shift), which this functor
-  // does not implement, so the engaged device solve silently solved a DIFFERENT operator.
-  // It was invisible because the S1/S3 self-checks' host references re-implement the
-  // functor's own formula instead of calling the fix's real per-pair value -- fixed in by routing
-  // them through calc_Hval(). Porting the DSF/Ewald forms into the augmented functor is the follow-up
-  // (§"Applied "); until then this combination falls
-  // back to the host BiCGStab, which is correct.
+  // with them enabled would silently use the wrong diagonal or double-count the long range.
+  // device_kernel_ok() excludes iondamp.
+  // ★ lr_alpha <= 0 is REQUIRED: TagSamMatvecFull's H-block computes the tapered short-range form
+  // (Taper·qqrd2e/∛(r³+shld)), which is what the host assembles only when lr_alpha <= 0
+  // (FixQEqSam::compute_H's first line delegates to the base in that case). With lr_alpha > 0 the host
+  // assembles DSF (erfc/r − e_shift − r·f_shift), which this functor does not implement, so that
+  // combination falls back to the host BiCGStab. The S1/S3 self-checks take their host reference from
+  // calc_Hval(), the fix's real per-pair value, so they compare against the operator the host solves.
   bool device_eligible() const {
     return lr_ewald == 0 && list_full
            && !lr_quartic && !ridge_local && !lr_nrecip && device_kernel_ok() && lr_alpha <= 0.0;
                                            //
   }
   // q-direct (lr_ewald=2) device CG eligibility: molinv built (S7/S8/S9 assumptions).
-  // Same exclusions as device_eligible() above and for the same reason (audit C4); : device_kernel_ok()
-  // (iondamp) replaces the shield gate -- cbrt/pqeq/slater all run on device now.
+  // Same exclusions as device_eligible() above and for the same reason; device_kernel_ok() excludes
+  // iondamp (cbrt/pqeq/slater all run on device).
   // lr_alpha > 0 required for the mirror reason as above: TagSamMatvecHErfc computes the EWALD-SPLIT form
   // (J_shield − (1−erfc(αr))/r), which is the host's H only while lr_alpha > 0; at lr_alpha == 0 the host
-  // falls back to the legacy tapered base compute_H. lr_ewald=2 decks always carry α = the PPPM g_ewald,
+  // uses the tapered base compute_H. lr_ewald=2 decks always carry α = the PPPM g_ewald,
   // so this excludes nothing real -- it just makes the assumption explicit rather than latent.
   bool device_qcg_eligible() const {
     return lr_ewald == 2 && list_full && nmol_ > 0 && molinv
@@ -557,19 +535,19 @@ class FixQEqSamKokkos : public FixQEqSam {
   class PPPMSamqeqKokkos<DeviceType> *eksp_kk = nullptr;   // = the fix's eksp as the device pppm/samqeq/kk
   typename AT::t_kkfloat_1d d_prec;    // device reciprocal potential (compute_vector_device out)
   typename AT::t_kkfloat_1d d_qsave;   // stash of device atom-q while feeding trial charges
-  // (device_add_reciprocal moved to the public section — : it now hosts extended device lambdas
-  //  for the all-device path, and nvcc forbids those inside a private/protected member function.)
+  // (device_add_reciprocal is in the public section: it hosts extended device lambdas for the
+  //  all-device path, and nvcc forbids those inside a private/protected member function.)
 
   // ---- S7: device per-molecule neutral projection (validation harness + state) ----
   // one-time self-check that project_neutral_device reproduces the host per-molecule-neutral projection on a
   // deterministic test vector (default path). Mirrors the S1-S5 validate_* methodology.
   void validate_project_neutral();
-  Kokkos::View<double *, DeviceType> d_molinv;   // per-molecule 1/count (length nmol_ = nactive, B9 compact)
+  Kokkos::View<double *, DeviceType> d_molinv;   // per-molecule 1/count (length nmol_ = nactive, compact)
   Kokkos::View<double *, DeviceType> d_molsum;   // per-molecule sum scratch (length nmol_ = nactive)
-  // B9: per-LOCAL-atom COMPACT molecule index (device mirror of the host cmol built in build_molinv),
-  // uploaded in upload_device_state. Indexes d_molinv/d_molsum here -- d_mol (raw tagint, above) stays in
-  // use for the S2 bond-softness intra-molecule EQUALITY test, which is compaction-invariant (same molecule
-  // <=> same compact slot too) and so needed no change.
+  // per-LOCAL-atom COMPACT molecule index (device mirror of the host cmol built in build_molinv),
+  // uploaded in upload_device_state. Indexes d_molinv/d_molsum here -- d_mol (raw tagint, above) is used
+  // for the S2 bond-softness intra-molecule EQUALITY test, which is compaction-invariant (same molecule
+  // <=> same compact slot).
   Kokkos::View<int *, DeviceType> d_cmol;
   int  s7_nmol = 0;          // nmol_ at last (re)allocation of d_molinv/d_molsum
   bool s7_done = false;      // one-time validation flag
@@ -579,24 +557,22 @@ class FixQEqSamKokkos : public FixQEqSam {
   Kokkos::View<double *, DeviceType> d_gamma;   // per-type shielding gamma (s1_ntp1) for the Ewald H-block
   double s8_alpha = 0.0;     // lr_alpha (Ewald real-space damping) at last upload
   bool s8_done = false;
-  // ---- (#30) stored H (see the functors above) ----
+  // ---- stored H (see the functors above) ----
   typedef Kokkos::View<double **, Kokkos::LayoutRight, DeviceType> t_hval_2d;
   t_hval_2d d_Hval;         // [local atom][slot] = H_ij,
                             // LayoutRight: a row must be contiguous for the vector-lane reads
-  bigint hmat_step = -1;    // (#30): the stored H depends only on positions/types, which are fixed
-                            // WITHIN a timestep — so rebuild once per STEP, not once per solve. Without
-                            // this the q0-field call and the CG each triggered their own build (23 builds
-                            // for 10 steps).
+  bigint hmat_step = -1;    // the stored H depends only on positions/types, which are fixed WITHIN a
+                            // timestep — so rebuild once per STEP, not once per solve (the q0-field
+                            // call and the CG share one build).
   bool hmat_stale = true;   // rebuild at the start of each SOLVE (positions/types are fixed within one,
                             // and rebuilding per solve rather than per step is automatically correct for
                             // ASPC's second call)
   bool hmat_ok = true;      // false once an allocation attempt fails -> permanent matrix-free fallback
   bool hmat_msg = false;    // one-time log of which path is in use + what it costs
 
-  // ---- (#30) phase timing (env SAMQEQ_KK_TIME=1), printed by post_run() ----
-  // nsys cannot trace GPU kernels in this environment (WSL2 blocks activity tracing; API tracing
-  // still works), and phase attribution by hypothesis has now been wrong twice. These are
-  // fenced wall-clock timers around each phase of the device matvec — the ground truth.
+  // ---- phase timing (env SAMQEQ_KK_TIME=1), printed by post_run() ----
+  // Fenced wall-clock timers around each phase of the device matvec, usable where a GPU profiler
+  // cannot trace kernels.
   int    tm_on = -1;        // -1 = read the env var on first use
   double tm_comm = 0.0, tm_hbuild = 0.0, tm_spmv = 0.0, tm_diag = 0.0, tm_recip = 0.0, tm_proj = 0.0;
   long   tm_calls = 0, tm_builds = 0;

@@ -1,19 +1,18 @@
 // clang-format off
 /* ----------------------------------------------------------------------
-   samQEq (fix qeq/sam): BLOCK-2x2 ILUT preconditioner for the ACKS2 saddle (#20).
+   samQEq (fix qeq/sam): BLOCK-2x2 ILUT preconditioner for the ACKS2 saddle.
    Methods are members of class FixQEqSam.
 
    The metal limit makes the saddle ill-conditioned -> the diagonal (Jacobi)
-   preconditioner needs thousands of BiCGStab iters and is proc-flaky on large metals
-   (benzene/Au). NumPy de-risk (samqeq_metalprecond.py): an ILU of the saddle converges in ~2-3 iters,
-   scale-independent. SCALAR ILU(0) is unstable on the large indefinite saddle; this
+   preconditioner needs thousands of BiCGStab iters and is proc-sensitive on large metals
+   (e.g. benzene/Au). An ILU of the saddle converges in a few iters, scale-independent. SCALAR ILU(0) is unstable on the large indefinite saddle; this
    uses BLOCK-2x2 ILUT (per-atom [s_i,u_i]) whose diagonal blocks [[eta+ridge,1],[1,X_diag]]
    are nonsingular (det = (eta+ridge)*X_diag - 1 != 0) -> stable, no scalar pivoting.
 
-   PARALLEL = CENTRALIZED / REPLICATED (#20a). Per-proc block-Jacobi (additive Schwarz)
+   PARALLEL = CENTRALIZED / REPLICATED. Per-proc block-Jacobi (additive Schwarz)
    DROPS the cross-proc Au-Au couplings that make the metal near-singular -> BiCGStab
    breaks down at nprocs>1; a piecewise-constant per-proc coarse correction (two-level
-   Schwarz) was empirically too weak (still broke down). Instead every rank assembles the
+   Schwarz) is too weak (it still breaks down). Instead every rank assembles the
    FULL global saddle (gather each proc's H/X couplings by global atom tag), factors the
    EXACT serial block-ILUT, and applies it to the GLOBALLY-gathered residual. The solve is
    replicated and identical on every rank -> the preconditioner is decomposition-independent
@@ -69,7 +68,7 @@ void FixQEqSam::ilu_free()
   memory->destroy(ilu_scr);  ilu_scr = nullptr;
   memory->destroy(ilu_w);    ilu_w = nullptr;
   ilu_n = ilu_nnz = 0;
-  ilu_valid = 0;             // #16: freed factor ⇒ force a rebuild on the next solve
+  ilu_valid = 0;             // freed factor ⇒ force a rebuild on the next solve
 }
 
 /* ----------------------------------------------------------------------
@@ -90,7 +89,7 @@ void FixQEqSam::ilu_build()
   const int n = (int) atom->natoms;     // GLOBAL block count (replicated factor)
   const int nl = atom->nlocal;
   int *type = atom->type;
-  int *mask = atom->mask;               // : needed to skip non-group rows (see the emit loop)
+  int *mask = atom->mask;               // needed to skip non-group rows (see the emit loop)
   tagint *tag = atom->tag;
 
   // --- emit this rank's contributions: (gi, gj, comp, value), comp 0 = s-s block, 3 = u-u block.
@@ -103,13 +102,11 @@ void FixQEqSam::ilu_build()
     sb.push_back((double)gi); sb.push_back((double)gj); sb.push_back((double)comp); sb.push_back(v);
   };
   for (int i = 0; i < nl; i++) {
-    // : H/X rows EXIST ONLY FOR GROUP ATOMS. compute_H (fix_qeq_sam.cpp) and compute_X
+    // H/X rows EXIST ONLY FOR GROUP ATOMS. compute_H (fix_qeq_sam.cpp) and compute_X
     // write firstnbr/numnbrs under `mask[i] & groupbit`; allocate_matrix uses memory->create (malloc,
-    // not calloc), so for a non-group atom those entries are heap garbage and the inner loops below
-    // walk a wild jlist range -> SIGSEGV. Harmless while every deck ran group == all (which is why
-    // the metal_ilu golden never caught it); fatal the moment the group is a subset -- e.g. the
-    // Drude melt, where the 1680 Drude shells are local atoms OUTSIDE the group by design.
-    // precond_apply already guards the same way (below); the guard was simply missing here.
+    // not calloc), so for a non-group atom those entries are uninitialized and the inner loops below
+    // would walk a wild jlist range. The guard matters whenever the group is a subset of all atoms.
+    // precond_apply guards the same way (below).
     if (!(mask[i] & groupbit)) continue;
     int gi = (int)tag[i] - 1;
     emit(gi, gi, 0, eta[type[i]] + lr_ridge + ilu_shift);   // s-s diagonal (+ optional Manteuffel shift)
@@ -138,7 +135,7 @@ void FixQEqSam::ilu_build()
   // --- accumulate into the global per-atom block adjacency ---
   std::vector<std::map<int, std::array<double,4>>> blk(n);
   for (int i = 0; i < n; i++) { auto &dii = blk[i][i]; dii[1] = 1.0; dii[2] = 1.0; }  // s-u identity
-  // : mark which global rows are group rows. Each rank knows only its own atoms' masks, but with
+  // Mark which global rows are group rows. Each rank knows only its own atoms' masks, but with
   // the guard above every group atom (and only a group atom) emits its own diagonals, and every
   // emitted column is group-guarded too -- so the gathered stream identifies the group set exactly.
   std::vector<char> ingrp(n, 0);
@@ -149,8 +146,8 @@ void FixQEqSam::ilu_build()
   }
 
   // --- block-ILUT(drop_tol): per-row L (col<i) + U (col>=i); fill kept above a relative
-  //     drop tolerance. Pivots from U_ii^{-1} stored in ilu_Dinv. (Same kernel as serial,
-  //     now over the N global block rows.) ---
+  //     drop tolerance. Pivots from U_ii^{-1} stored in ilu_Dinv. (Serial kernel, applied
+  //     over the N global block rows.) ---
   ilu_free();
   ilu_n = n;
   memory->create(ilu_Dinv, 4*n, "samqeq:ilu_Dinv");
@@ -202,9 +199,9 @@ void FixQEqSam::ilu_build()
   memory->create(ilu_Y1, 2*n, "samqeq:ilu_Y1");
   memory->create(ilu_scr, 2*n, "samqeq:ilu_scr");
   memory->create(ilu_w,  2*n, "samqeq:ilu_w");
-  // : the constraints are Sum_{i in GROUP} s_i = 0 and Sum_{i in GROUP} u_i = 0, so the C columns
+  // The constraints are Sum_{i in GROUP} s_i = 0 and Sum_{i in GROUP} u_i = 0, so the C columns
   // carry ones on GROUP rows only. A one on a non-group row would feed a phantom +1 per excluded atom
-  // into the Schur sums below (~1680 of them on the Drude melt) -- still a legal nonsingular
+  // into the Schur sums below -- still a legal nonsingular
   // preconditioner, but a distorted projection that costs iterations. With C zero there, Y0/Y1 are
   // exactly zero on those rows (decoupled [[0,1],[1,0]] block, zero rhs), so the sums need no masking.
   for (int i = 0; i < n; i++) { ilu_scr[2*i] = 0.0; ilu_scr[2*i+1] = ingrp[i] ? 1.0 : 0.0; }  // C col0 (u)
@@ -305,13 +302,12 @@ void FixQEqSam::precond_apply(double *in, double *out)
 }
 
 /* ----------------------------------------------------------------------
-   : one retry of a GROSSLY unconverged uncapped saddle solve under the block-ILUT preconditioner.
+   One retry of a GROSSLY unconverged uncapped saddle solve under the block-ILUT preconditioner.
    Called from FixACKS2Sam::pre_force (rel-residual > 10x tolerance after BiCGStab exhausted imax).
    The diagonal Jacobi preconditioner scales the u-block by 1/X_diag; a monatomic ion
    has X_diag ~ -1e-3 (no intra edges), so its u-row is scaled 1e3x
-   against the charge rows and BiCGStab stalls: measured 1000 matvecs, resid/b up to 4e3, against
-   13-14 matvecs under ILU on the same operator.
-   MINRES(diag) also converges them but at 1000-1400 matvecs. The switch is kept for the rest of the run
+   against the charge rows and BiCGStab can stall where ILU on the same operator converges in
+   tens of matvecs. MINRES(diag) also converges such systems, but far more slowly. The switch is kept for the rest of the run
    (a preconditioner only sets the iteration count) and announced once. Restart from s = 0 (q = q0): the
    exhausted iterate is not a usable initial guess. Returns matvecs used; -1 when no retry applies.
 -------------------------------------------------------------------------*/

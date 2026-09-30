@@ -1,5 +1,5 @@
 # EXPECT_OK
-# s88b positive control for in.refuse_shield_nokspace: same no-kspace deck, but the 1-2/1-3 hops carry a tiny nonzero
+# Positive control for in.refuse_shield_nokspace: same no-kspace deck, but the 1-2/1-3 hops carry a tiny nonzero
 # lj weight, so special_flag=2 and the pairs stay in the list (neighbor.cpp:531) -> must run and write charges.dump.
 units           metal
 atom_style      full

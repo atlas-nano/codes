@@ -1,9 +1,8 @@
 /* -*- c++ -*- ----------------------------------------------------------
    pppm/samqeq/kk — KOKKOS device version of pppm/samqeq.
 
-   Phase 3 of the qeq/sam/kk port: the per-atom
-   reciprocal-space Coulomb potential (compute_vector) on the GPU, so the
-   lr_ewald>0 flagship charge solve can run the reciprocal in the device matvec
+   The per-atom reciprocal-space Coulomb potential (compute_vector) on the GPU,
+   so the lr_ewald>0 charge solve can run the reciprocal in the device matvec
    instead of round-tripping to the host PPPMSamqeq every iteration.
 
    Reuse > rewrite: subclass PPPMKokkos<DeviceType> and inherit its entire device
@@ -14,10 +13,8 @@
    only ships the ik/gradient poisson, so we do the ad/potential poisson ourselves,
    exactly as the CPU PPPMSamqeq does). PPPMKokkos's grid forward_comm only packs the
    ik E-field bricks (FORWARD_IK), so we override the grid pack/unpack to comm u_brick
-   (a 1-value FORWARD_AD-style exchange). Kokkos Views zero-init -> the #10 uninit
-   buffer bug cannot recur on device.
-
-   DRAFT-1 (session 18): written from the recon map; expect a build-fix round.
+   (a 1-value FORWARD_AD-style exchange). Kokkos Views zero-initialise, so no grid
+   buffer is read uninitialised.
 ------------------------------------------------------------------------*/
 
 #ifdef KSPACE_CLASS
@@ -43,7 +40,7 @@ struct TagSamqeqFillWork1{};        // electrolyte_density_fft -> work1 (real, i
 struct TagSamqeqMulGreens{};        // work2 = work1 * greensfn
 struct TagSamqeqWork2ToU{};         // work2 (real) -> u_brick (inner grid)
 struct TagSamqeqProjectPsi{};       // interpolate u_brick -> per-atom potential vec (sensor group)
-struct TagSamqeqRho1d{};            // (#30): fill d_rho1d for all local atoms, ONCE per step
+struct TagSamqeqRho1d{};            // fill d_rho1d for all local atoms, ONCE per step
 struct TagSamqeqPackU{};            // grid forward-comm pack of u_brick
 struct TagSamqeqUnpackU{};          // grid forward-comm unpack of u_brick
 
@@ -57,26 +54,26 @@ class PPPMSamqeqKokkos : public PPPMKokkos<DeviceType>, public SamqeqKspace {
   PPPMSamqeqKokkos(class LAMMPS *);
   ~PPPMSamqeqKokkos() override;
 
-  // ★ run-boundary fix, device mirror of PPPMSamqeq::init() (pppm_samqeq.cpp) -- see that file's
-  // comment for the full mechanism; same override needed here (see .cpp).
+  // run-boundary re-arm, device mirror of PPPMSamqeq::init() (pppm_samqeq.cpp) -- see that file's
+  // comment for the mechanism (see .cpp).
   void init() override;
 
-  // #10-on-device (audit C13): PPPMSamqeqKokkos subclasses PPPMKokkos directly (not PPPMSamqeq), so it
-  // does NOT inherit PPPMSamqeq::compute()'s qsum_qsq(0) refresh; without this override E_long is wrong
-  // under fluctuating charges exactly like the pre-#10 CPU bug. See pppm_samqeq_kokkos.cpp for detail.
+  // PPPMSamqeqKokkos subclasses PPPMKokkos directly (not PPPMSamqeq), so it does NOT inherit
+  // PPPMSamqeq::compute()'s qsum_qsq(0) refresh; without this override E_long is wrong under fluctuating
+  // charges. See pppm_samqeq_kokkos.cpp for detail.
   void compute(int, int) override;
 
   // device entry: accumulate the RAW reciprocal potential (no qqrd2e) of the source
   // group's charges (atom q on device) at the sensor group's atoms into d_vec[0,nlocal).
-  // q_on_device (, #30): the caller has staged the trial charges into the DEVICE q and is keeping
+  // q_on_device: the caller has staged the trial charges into the DEVICE q and is keeping
   // it canonical itself — do not touch the q flags or sync q here. Default false = the host-staged
   // case (every CPU-side caller), where host q is canonical by construction and must be pushed.
-  // Getting this wrong in either direction silently computes the reciprocal of the wrong charges,
-  // which is #29 all over again — see the sync block in the .cpp.
+  // Getting this wrong in either direction silently computes the reciprocal of the wrong charges —
+  // see the sync block in the .cpp.
   void compute_vector_device(typename AT::t_kkfloat_1d d_vec, int sensor_grpbit,
                              int source_grpbit, bool invert_source, bool q_on_device = false);
   // host convenience wrapper (matches the CPU PPPMSamqeq signature): vec is host, ACCUMULATES.
-  // overrides the now-virtual PPPMSamqeq::compute_vector so the fix's dynamic_cast dispatches here.
+  // overrides the virtual PPPMSamqeq::compute_vector so the fix's dynamic_cast dispatches here.
   void compute_vector(double *vec, int sensor_grpbit, int source_grpbit, bool invert_source) override;
 
   void allocate() override;
@@ -92,10 +89,9 @@ class PPPMSamqeqKokkos : public PPPMKokkos<DeviceType>, public SamqeqKspace {
   KOKKOS_INLINE_FUNCTION void operator()(TagSamqeqMulGreens, const int &) const;
   KOKKOS_INLINE_FUNCTION void operator()(TagSamqeqWork2ToU, const int &) const;
   KOKKOS_INLINE_FUNCTION void operator()(TagSamqeqProjectPsi, const int &) const;
-  /* (#30): the charge-assignment weights depend only on POSITIONS, which are fixed within a
-     timestep — but make_rho and project_psi each recomputed them on every call, and the solve makes
-     ~8.5 reciprocal calls per step. On A100 those two are 45.4% and 8.0% of the reciprocal, which is
-     itself 38% of the device matvec. Compute d_rho1d once per step and have both read it.
+  /* The charge-assignment weights depend only on POSITIONS, which are fixed within a timestep, while
+     the solve makes several reciprocal calls per step. Compute d_rho1d once per step and have
+     make_rho and project_psi both read it.
      Safe against the base class overwriting d_rho1d in its own force-path make_rho: that runs AFTER
      our calls each step, and the stamp is per step, so the next step recomputes.*/
   KOKKOS_INLINE_FUNCTION void operator()(TagSamqeqRho1d, const int &) const;
@@ -107,10 +103,9 @@ class PPPMSamqeqKokkos : public PPPMKokkos<DeviceType>, public SamqeqKspace {
   KOKKOS_INLINE_FUNCTION
   void sam_compute_rho1d(const int, const FFT_SCALAR &, const FFT_SCALAR &, const FFT_SCALAR &) const;
 
-  /* ---- (#29) STAGE DIAGNOSTIC: env SAMQEQ_KKSP_DIAG=<n> prints per-stage checksums of
-     compute_vector_device for the first n calls. The defect being hunted (charge solve corrupted from
-     the 2nd solve of a process onward, TRIAGE_pppm_samqeq_kk_s67.md) is invisible at the level of the
-     final per-atom potential -- these sums say WHICH stage of the pipeline the divergence enters:
+  /* ---- STAGE DIAGNOSTIC: env SAMQEQ_KKSP_DIAG=<n> prints per-stage checksums of
+     compute_vector_device for the first n calls. A fault in the reciprocal pipeline can be invisible
+     at the level of the final per-atom potential -- these sums say WHICH stage a divergence enters:
        rho_brick -> rho_fft : masked make_rho + reverse_comm + brick2fft
        work2 : the ad-poisson (FFT, greensfn, FFT)
        u_inner vs u_all : the FORWARD_AD ghost exchange of u_brick (difference = ghost content)
@@ -138,20 +133,19 @@ class PPPMSamqeqKokkos : public PPPMKokkos<DeviceType>, public SamqeqKspace {
   typename AT::t_int_2d_lr_um d_ulist_index;
 
   int sam_compute_step;                  // lazy particle_map + rho1d-weights guard (mirrors CPU start_compute).
-                                         // (row 183): the weights are filled under THIS stamp, in
-                                         // start_compute_device, never under their own (see the defect note there)
+                                         // The weights are filled under THIS stamp, in
+                                         // start_compute_device, never under their own (see the note there)
   void start_compute_device();
-  // (#30): sub-phase wall clock of compute_vector_device, accumulated here and printed by
-  // FixQEqSamKokkos::post_run (which holds eksp_kk) under SAMQEQ_KK_TIME=1. The reciprocal is the
-  // largest single phase of the device matvec on A100 (38%), and "the reciprocal" is five different
-  // things — make_rho, brick2fft+reverse comm, two FFTs with the Greens multiply, the u_brick forward
-  // comm, and the projection back to atoms. Optimising it without this split would be guesswork.
+  // Sub-phase wall clock of compute_vector_device, accumulated here and printed by
+  // FixQEqSamKokkos::post_run (which holds eksp_kk) under SAMQEQ_KK_TIME=1. The reciprocal is five
+  // phases — make_rho, brick2fft+reverse comm, two FFTs with the Greens multiply, the u_brick forward
+  // comm, and the projection back to atoms.
  public:
   double tk_rho = 0.0, tk_b2fft = 0.0, tk_fft = 0.0, tk_ucomm = 0.0, tk_proj = 0.0;
   long   tk_calls = 0;
   int    tk_on = -1;                     // -1 = read the env var on first use
  protected:
-  int sam_diag_left = -1;                // #29 stage diagnostic: calls still to print (-1 = read env)
+  int sam_diag_left = -1;                // stage diagnostic: calls still to print (-1 = read env)
   int sam_diag_call = 0;                 // call counter, for the printout
 };
 

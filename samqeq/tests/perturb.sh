@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# samQEq uninitialised-read check (, ). For every case, run the deck twice at
+# samQEq uninitialised-read check. For every case, run the deck twice at
 # NP ranks on the SAME binary -- plain, and with MALLOC_PERTURB_=165 (glibc fills every fresh allocation with garbage) --
 # and require the two to be BYTE-IDENTICAL (charges.dump and pe.txt). A code path that reads a never-written slot
 # changes the result or aborts; nothing else can. No goldens, no tolerance: np-N vs np-1 round-off plays no part.
-# It caught D2 (init_matvec left p[2NN..2NN+1] unset on ranks != last_rows_rank): 19 ACKS2-saddle cases aborted.
 #
 # Usage:  ./perturb.sh                  # NP=2, all cases
-#         NP=4 ./perturb.sh <case>...   # before a cluster release: np 3-4 too
+#         NP=4 ./perturb.sh <case>...   # np 3-4 as well
 #         LMP=/path/to/lmp ./perturb.sh
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

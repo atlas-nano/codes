@@ -1,8 +1,7 @@
-# ionfield_cl_water (proposed golden, ): ONE SPC-FQ water in the solve group + ONE FIXED Cl- (type 3, q=-1)
-# OUTSIDE the group. Exercises the `ionfield` pass (fix_qeq_sam_lr.cpp add_fixed_charge_field(false)) with a
-# REAL non-group source: real-space shielded field + reciprocal compute_vector(invert_source) + the RHS fold.
-# Every other golden has NO charged atom outside its solve group (census 2026-09-26, perf_s90/ionfield_s90), so
-# without this case the pass itself is untested by the suite. Control (not a golden): `fix_modify chg ionfield off`
+# ionfield_cl_water: ONE SPC-FQ water in the solve group + ONE FIXED Cl- (type 3, q=-1) OUTSIDE the group.
+# Exercises the `ionfield` pass (fix_qeq_sam_lr.cpp add_fixed_charge_field(false)) with a REAL non-group
+# source: real-space shielded field + reciprocal compute_vector(invert_source) + the RHS fold. It is the only
+# case with a charged atom outside its solve group. Control (not a golden): `fix_modify chg ionfield off`
 # gives the ion-blind lone-water charges (O -0.668091), within ~4e-5 of spcfq_gas_ewald -- not exact, because PPPM's
 # automatic g_ewald changes with the extra charge. The pass moves O by 0.075 e and polarizes H 0.506/0.237.
 units           metal

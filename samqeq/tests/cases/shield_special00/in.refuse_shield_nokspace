@@ -1,8 +1,7 @@
 # EXPECT: are dropped from the neighbor list
-# s88b refusal probe: NO kspace_style + bonds + special_bonds lj 0 coul 0 -> LAMMPS really removes the 1-2/1-3 pairs
-# (neighbor.cpp:527-543 special_flag=0; npair.h find_special -> -1), so pair coul/shield/intra must still refuse.
-# Fixed charges, no fix qeq/sam (the fix itself requires kspace, fix_qeq_sam.cpp:835-836, so it cannot be here).
-# The EXPECT phrase must survive the s88b message rewrite (keep "are dropped from the neighbor list" in the new text).
+# Refusal probe: NO kspace_style + bonds + special_bonds lj 0 coul 0 -> LAMMPS really removes the 1-2/1-3 pairs
+# (neighbor.cpp:527-543 special_flag=0; npair.h find_special -> -1), so pair coul/shield/intra must refuse.
+# Fixed charges, no fix qeq/sam (the fix itself requires kspace, so it cannot be here).
 units           metal
 atom_style      full
 boundary        p p p
