@@ -173,12 +173,24 @@ def compute_xpt(engine: "xPTEngine",
 
             # packing factor exponent d/(d-1) (= 1.5 at d=3, exact).  d=1 is the
             # degenerate limit γ=1-f (the exponent diverges; handle separately).
+            # The closure is y = (f/K)^(d/(d-1)) · x_gas with x_gas the gas
+            # NUMBER fraction.  hsd = ∫S_gas counts d DoF per gas particle and
+            # tdf = ∫S_total counts n_ax DoF per particle (n_ax = active velocity
+            # axes), so x_gas = (hsd/d) / (tdf/n_ax).  When n_ax == d this is
+            # hsd/tdf (the bulk and strictly-d-dimensional form, kept literal);
+            # in slit mode (3 velocity axes, d = 2 gas) hsd/tdf alone would be
+            # 2/3 of the gas fraction.
             tdf = trapz_dos(pwr_t, nu)
+            n_ax = int(getattr(engine, "_dof_axes", {}).get(gi, d_dim))
             if d_dim == 1:
                 y_arr[gi] = max(0.0, 1.0 - fm)        # Tonks packing γ = 1 − f
             else:
                 ry = (fm / K_eff)**(d_dim/(d_dim-1.0)) if K_eff > 0 else 0.0
-                y_arr[gi] = ry * (hsd / tdf if tdf > 0 else 0.0)
+                if d_dim != 3 and n_ax != d_dim:
+                    x_gas = ((hsd / d_dim) / (tdf / n_ax)) if tdf > 0 else 0.0
+                else:
+                    x_gas = hsd / tdf if tdf > 0 else 0.0
+                y_arr[gi] = ry * x_gas
             hsdf_arr[0, gi] = hsd
 
         if engine._molecular and engine._rot_type < engine._vactype:

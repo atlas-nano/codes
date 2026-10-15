@@ -415,21 +415,74 @@ def enskog_K_parameter(s0: float, T_K: float,
     The internal `* 1e-3` converts mass from g/mol to kg/mol for the
     sqrt term; the `* 1e10` converts the volume factor from Å to m.
 
-    ``dimension`` generalizes the 3D constants to d dimensions:
-    ``2/9 → 2/(3d)``, ``(N/V)^(1/3) → (N/V)^(1/d)`` (V is the Å^d volume:
-    Å³ bulk, Å² slit, Å channel), and ``(6/π)^(2/3) → v_d^(-(d-1)/d)`` with
-    ``v_d`` the d-ball packing coefficient (π/6, π/4, 1 for d=3,2,1).  d=3 is
-    bit-identical to the original.  Feed the result to ``solve_xpt_dgen(K, d)``.
+    General dimension d.  K is the ratio D/D_0 of the self-diffusivity to
+    the dilute hard-sphere (Chapman-Enskog, first Sonine approximation)
+    value at packing fraction 1, with
+
+    .. math::
+
+       D = \\frac{S(0)\\,k_BT}{4\\,d\\,m\\,N}, \\qquad
+       D_0 = c_d \\left(\\frac{k_BT}{\\pi m}\\right)^{1/2}
+             \\frac{1}{n\\,\\sigma^{d-1}}, \\qquad
+       c_d = \\frac{d\\,\\Gamma(d/2)}{4\\,\\pi^{(d-2)/2}},
+
+    and σ^d = γ/(v_d n), which gives
+
+    .. math::
+
+       K = \\frac{s_0}{4\\,d\\,c_d\\,N}\\sqrt{\\frac{\\pi k_B T}{m}}
+           \\left(\\frac{N}{V}\\right)^{1/d} v_d^{-(d-1)/d}.
+
+    c_3 = 3/8 (hard spheres), c_2 = 1/2 (hard disks; Gass, J. Chem. Phys.
+    54, 1898 (1971)), c_4 = 1/π; c_1 = π/4 is the formal continuation (the
+    hard-rod Chapman-Enskog problem is degenerate, see ``solve_xpt_dgen``).
+    ``V`` is the Å^d measure (Å³ bulk, Å² slit, Å channel) and ``v_d`` the
+    volume of a d-ball of unit diameter (π/6, π/4, 1 for d = 3, 2, 1).
+
+    At d = 3, 1/(4 d c_d) = 1/(12 · 3/8) = 2/9, Lin's constant; that branch
+    evaluates the original literal expression and is bit-identical to all
+    earlier releases.  Releases up to 2.0.0 used 2/(3d) for every d, which
+    equals 1/(4 d c_d) only if c_d = 3/8 in every dimension: K was 4/3 too
+    large at d = 2 and 15 % too small at d = 4.  Feed the result to
+    ``solve_xpt_dgen(K, d)``.
 
     Source of truth for the K formula — used by the 2PT/3PT path
     (in `_xpt_compute.py`) for both translational and rotational channels.
     Single point of update if the dimensional convention ever changes.
     """
     v_d = {1: 1.0, 2: PI/4.0, 3: PI/6.0, 4: PI*PI/32.0}[dimension]   # diameter-1 d-ball volume
+    if dimension == 3:
+        return (s0 / VLIGHT * 1e-2) / nmol * math.sqrt(
+            PI * NA * KB * T_K / (mass_per_mol_g_mol * 1e-3)
+        ) * 2.0 / (3.0*dimension) * (nmol / vol_A3)**(1.0/dimension) * 1e10 \
+            * v_d**(-(dimension - 1.0)/dimension)
+    c_d = chapman_enskog_cd(dimension)
     return (s0 / VLIGHT * 1e-2) / nmol * math.sqrt(
         PI * NA * KB * T_K / (mass_per_mol_g_mol * 1e-3)
-    ) * 2.0 / (3.0*dimension) * (nmol / vol_A3)**(1.0/dimension) * 1e10 \
+    ) / (4.0 * dimension * c_d) * (nmol / vol_A3)**(1.0/dimension) * 1e10 \
         * v_d**(-(dimension - 1.0)/dimension)
+
+
+def chapman_enskog_cd(dimension: int) -> float:
+    """Prefactor c_d of the dilute hard-sphere self-diffusivity in d dimensions,
+    D_0 = c_d (k_BT/(π m))^(1/2) / (n σ^(d-1)), first Sonine approximation:
+    c_d = d Γ(d/2) / (4 π^((d-2)/2)).  c_3 = 3/8, c_2 = 1/2, c_4 = 1/π."""
+    d = int(dimension)
+    return d * math.gamma(d / 2.0) / (4.0 * PI ** ((d - 2) / 2.0))
+
+
+def dos0_to_diffusivity(s0: float, T_K: float, mass_g_mol: float,
+                        dimension: int = 3) -> float:
+    """Self-diffusivity [cm²/s] from the zero-frequency DoS.
+
+    With the one-sided DoS S(ν) = (4/k_BT) Σ_j m_j ∫_0^∞ C_j(t) cos(2πνt) dt
+    and ∫_0^∞ ⟨v(0)·v(t)⟩ dt = d D per particle, S(0) = 4 d m N D / (k_BT),
+    so D = S(0) k_BT / (4 d m N).  ``s0`` is the DoS at ν = 0 [cm] of a
+    channel whose total mass is ``mass_g_mol`` [g/mol] (so m N is that mass);
+    ``dimension`` is the diffusion dimension d.  At d = 3 the denominator is
+    12, the form used by all earlier releases (bit-identical).
+    """
+    return s0 * R * T_K / (4.0 * dimension * VLIGHT * mass_g_mol) * 1e5
 
 
 def xpt_partition(s0: float, sv: float, nu: float, nmol: int,
@@ -1175,10 +1228,18 @@ def invert_kernel_matrix(dt: float, C_matrix: np.ndarray,
                           swing_threshold: float = 10.0,
                           swing_window: int = 5,
                           nf_run: int = 1,
+                          quadrature: str = "trapezoid",
                           label: str | None = None,
                           ) -> np.ndarray:
     """Discrete Volterra inversion of the matrix memory kernel
     via the second-derivative (Form B) GLE.
+
+    The convolution is evaluated by product integration over the lag grid.  With
+    ``quadrature="trapezoid"`` (default) the s = t endpoint carries half weight and the
+    rule is second order in ``dt``; ``quadrature="rectangle"`` reproduces the first-order
+    rule of versions up to 2.0.1.  The second-order rule satisfies the Green-Kubo identity
+    gamma * int_0^inf c(t) dt = 1 to the accuracy of the sampled correlation function,
+    which the first-order rule violates by O(dt * Omega_0).
 
     Continuous form (differentiated GLE):
 
@@ -1310,6 +1371,10 @@ def invert_kernel_matrix(dt: float, C_matrix: np.ndarray,
     #   (2) Conv-finite check on the convolution accumulator
     #   (3) Per-element divergence clamp (max|K[n,i,j]| > divergence_factor · M0_max)
     #   (4) Adaptive swing-streak on ‖K[n]‖_F (consecutive lag-to-lag ratio out of band)
+    if quadrature not in ("trapezoid", "rectangle"):
+        raise ValueError(f"quadrature must be trapezoid|rectangle (got {quadrature!r})")
+    _trapz = (quadrature == "trapezoid")
+
     _swing_streak = 0
     _nf_streak    = 0
     _M_prev_norm  = float(np.linalg.norm(M[0]))
@@ -1336,10 +1401,16 @@ def invert_kernel_matrix(dt: float, C_matrix: np.ndarray,
         Cdd_n = (C_hat[n-1] - 2.0 * C_hat[n] + C_hat[n+1]) / (dt ** 2)
 
         # Convolution sum with central-difference Ċ̂[j], j = 1..n.
+        # Quadrature weights over the lag index j: "trapezoid" (default) puts half
+        # weight on the s = t endpoint (j = n), which makes the product-integration
+        # rule second order in dt; the s = 0 endpoint needs no weight because
+        # Ċ̂(0) = 0 for an even correlation function.  "rectangle" keeps unit
+        # weights, the first-order rule used up to version 2.0.1.
         conv = np.zeros((m, m))
         for j in range(1, n + 1):
             Cdot_j = (C_hat[j+1] - C_hat[j-1]) / 2.0
-            conv += M[n-j] @ Cdot_j
+            w_j = 0.5 if (_trapz and j == n) else 1.0
+            conv += w_j * (M[n-j] @ Cdot_j)
 
         # (2) Conv-finite check: catch overflow / NaN before it propagates.
         if not np.isfinite(conv).all():
@@ -1641,6 +1712,33 @@ def kvol_gas_dos_split(dt: float, C_scalar: np.ndarray,
     return gas
 
 
+def cage_guard(dS, ndof: int, label: str = "", channel: str = "translational"):
+    """Sanity guard on a channel's cage entropy.
+
+    ``dS`` is the ``(dS_q, dS_cl)`` pair per particle [k_B] from
+    :func:`cage_memory_entropy`.  The cage is set to zero, with a warning, when it is
+    non-finite, larger than 3 k_B per degree of freedom (``ndof``), or negative: a
+    negative cage would move entropy from the gas side back to the solid side, which
+    the construction cannot do, so it signals a breakdown (e.g. a baseline gas weight
+    below the harmonic weight over the cage band in an arrested liquid), not physics.
+    Returns the pair unchanged when it passes.
+    """
+    dS_q, dS_cl = float(dS[0]), float(dS[1])
+    why = None
+    if not (np.isfinite(dS_q) and np.isfinite(dS_cl)):
+        why = "non-finite"
+    elif max(dS_q, dS_cl) > 3.0 * ndof:
+        why = f"larger than 3 k_B per degree of freedom ({ndof} DoF)"
+    elif min(dS_q, dS_cl) < 0.0:
+        why = "negative, which is unphysical"
+    if why is None:
+        return dS_q, dS_cl
+    log.warning("cage_memory_entropy(%s): the %s cage entropy correction is %s "
+                "(dS_q = %.4g, dS_c = %.4g k_B); the cage term is set to 0",
+                label, channel, why, dS_q, dS_cl)
+    return 0.0, 0.0
+
+
 def cage_memory_entropy(dt: float, C_scalar: np.ndarray,
                         nu_cm: np.ndarray, dos_total: np.ndarray,
                         dos_gas: np.ndarray, T_K: float,
@@ -1659,7 +1757,8 @@ def cage_memory_entropy(dt: float, C_scalar: np.ndarray,
                         Wg_override: float | None = None,
                         label: str | None = None,
                         cage_out: list | None = None,
-                        ws_form: str = "quantum"):
+                        ws_form: str = "quantum",
+                        quadrature: str = "trapezoid"):
     """Cross-family **cage-memory entropy correction** ΔS [k_B per atom].
 
     ``ws_form`` selects the harmonic weight W_s subtracted in the reweighting
@@ -1781,7 +1880,8 @@ def cage_memory_entropy(dt: float, C_scalar: np.ndarray,
     Cm = np.zeros((cn.size, 3, 3))
     for i in range(3):
         Cm[:, i, i] = cn
-    K = np.einsum('tii->t', invert_kernel_matrix(dt, Cm, nf_run=nf_run)) / 3.0
+    K = np.einsum('tii->t', invert_kernel_matrix(dt, Cm, nf_run=nf_run,
+                                                 quadrature=quadrature)) / 3.0
     nz = np.nonzero(K)[0]
     if not nz.size:
         if label:

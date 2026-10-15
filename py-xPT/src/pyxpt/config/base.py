@@ -89,11 +89,13 @@ class Config:
     # diffusion, 1 = 1D channel: the fluidicity closure, hard-sphere excess
     # entropy, Sackur-Tetrode gas weight, and gas-Lorentzian sum rule are computed
     # in d dimensions (Henderson hard-disk for d=2, Tonks rod for d=1).
-    # DECOUPLED from the total velocity-DoF count, which is auto-detected from the
-    # per-axis velocity variance: a slit/channel has 3 velocity DoF (the confined
-    # axis is a thermal vibrational/solid DoF) but 2D/1D diffusion → dimension=2/1
-    # with 3 DoF; a genuinely-2D run (v_z≡0) has 2 DoF and dimension=2.  Native
-    # confined-fluid entropy (cf. PNAS 108, 11794; JPCL 12, 9162).
+    # DECOUPLED from the number of velocity components, which comes from the
+    # trajectory: a slit/channel keeps its 3 velocity components (the confined
+    # axis is a thermal vibrational/solid DoF) with dimension=2/1; a strictly 2D
+    # run (2-column data, or v_z≡0) keeps 2 components and dimension=2.  The
+    # frame volume is not the d-dimensional measure unless the trajectory is
+    # d-dimensional: set [system_properties] volume (Å^d) otherwise.
+    # d != 3 is EXPERIMENTAL (not validated against free-energy references).
     dimension: int = 3
     # ΔS = (1/3)∫cage·(1−w)·(W_g−W_s)dν to the rigorous-HS entropy, recovering the
     # solid-side deficit of rigorous-HS in structured liquids (liquid metals, dense
@@ -105,8 +107,9 @@ class Config:
     # p_rot = 1/d_rot.  Off by default; independent of cage_entropy.
     cage_entropy_rot: bool = False
     # Volterra-kernel noise-floor / truncation controls for the cage memory
-    # excess (defaults reproduce the published bare-cage path bit-for-bit).
-    cage_nf_run: int = 1          # consecutive sub-noise-floor VACF lags before truncation
+    # excess.
+    cage_nf_run: int = 3          # translational cage: consecutive sub-noise-floor VACF lags before truncation
+    cage_nf_run_rot: int = 1      # rotational cage: 1 is the only rule whose rotational support does not move with the frame spacing
     cage_taper: str = "none"      # none|hann half-Hann taper on the truncated kernel
     cage_tail_tol: float = 1.0    # auto-cutoff -> main-lobe fallback tolerance
     # Harmonic weight subtracted in the cage reweighting.  "consistent" (default):
@@ -114,6 +117,11 @@ class Config:
     # quantum W_s, the classical ones with the classical W_s.  "legacy": the
     # classical W_s for both (3pt-v1 / 1.0.1 behaviour, to reproduce old results).
     cage_ws: str = "consistent"
+    # Product-integration weights in the Volterra kernel inversion: "trapezoid"
+    # (default) is second order in the frame spacing and satisfies the Green-Kubo
+    # identity gamma * int c dt = 1 for resolved data; "rectangle" is the
+    # first-order rule of versions up to 2.0.1, kept to reproduce earlier results.
+    cage_quadrature: str = "trapezoid"
     # Debye gas-gate: zero the fluidicity in (near-)crystalline channels, where a
     # ~ν² low-frequency DoS would otherwise be credited spurious diffusive entropy.
     # "none" (default) = off; "debye" applies the gate; "debye_warn" only reports.
@@ -470,6 +478,24 @@ class Config:
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
+_EXPERIMENTAL_DIM_WARNED = False
+
+
+def _warn_experimental_dimension(d: int) -> None:
+    """One-time warning: the d ≠ 3 branch is experimental."""
+    global _EXPERIMENTAL_DIM_WARNED
+    if _EXPERIMENTAL_DIM_WARNED:
+        return
+    _EXPERIMENTAL_DIM_WARNED = True
+    log.warning(
+        "dimension = %d is EXPERIMENTAL and not validated. The d != 3 closure, "
+        "hard-disk/rod reference and gas weight have not been benchmarked "
+        "against free-energy references: a dilute two-dimensional Lennard-Jones "
+        "fluid misses same-Hamiltonian thermodynamic integration by about "
+        "0.2-0.25 k_B per atom, where the d = 3 branch agrees to 0.04 k_B. "
+        "Treat d != 3 entropies as exploratory.", d)
+
+
 def validate(cfg: Config) -> None:
     """Validate a fully-loaded Config; raise ValueError on bad inputs."""
     # ── Phase 1 restructure: per-module enabled flags ───────────────────────
@@ -550,6 +576,8 @@ def validate(cfg: Config) -> None:
             f"dimension must be 1, 2, 3, or 4 (got {cfg.dimension}). "
             "3 = bulk (default); 2 = quasi-2D slit/interface; 1 = 1D channel; "
             "4 = d=4 hypersphere LJ (p=1/d test, 4D trajectories only).")
+    if cfg.dimension != 3:
+        _warn_experimental_dimension(cfg.dimension)
     if cfg.use_sim_z and not (cfg._pressure_provided and cfg._volume_provided
                               and cfg._temperature_provided):
         raise ValueError(

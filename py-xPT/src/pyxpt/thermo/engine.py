@@ -46,7 +46,7 @@ from pyxpt.thermo.utility import (
     mixture_packing_fraction, bmcsl_sigma_from_y, _bmcsl_xi,
     refine_Bg_desjarlais, xpt_partition_des, hsdf_des,
     decompose_velocities, decompose_velocities_batch,
-    detect_plateau,
+    detect_plateau, dos0_to_diffusivity,
 )
 from pyxpt.core.gpu import get_backend
 from pyxpt.core import fft as _onfft
@@ -448,10 +448,24 @@ class xPTEngine:
 
         # Derived flags
         self._molecular      = cfg.molecular
-        # Drives the VAC tensor / DoS / DoF axis count.  For d≠3 the trajectory
-        # reader supplies (natom, d) velocities and cfg.dimension == d; the
-        # molecular decomposition (rot/vib) is only supported at d=3.
+        # Number of velocity components kept per atom: drives the VAC tensor /
+        # DoS / DoF axis count.  It is NOT the gas dimension (cfg.dimension),
+        # although the two coincide in bulk.  At d = 3 it is 3.  At d ≠ 3 the
+        # buffer is sized by the reader's component count and the kept axes are
+        # resolved from the data after the first pass (_resolve_velocity_axes):
+        # a slit keeps 3 axes for a d = 2 gas, a strictly 2D run (2-column data,
+        # or v_z ≡ 0) keeps 2.  The molecular decomposition (rot/vib) is only
+        # supported at d = 3.
         self._nd        = int(getattr(cfg, "dimension", 3) or 3)
+        self._vel_keep: tuple[int, ...] | None = None   # kept columns (d ≠ 3)
+        self._dof_axes: dict[int, int] = {}             # group → active velocity axes
+        if (self._nd != 3 and not cfg.volume_override
+                and int(getattr(system, "vol_dim", 3)) != self._nd):
+            log.warning(
+                "dimension = %d without [system_properties] volume: the frame "
+                "volume (Å^%d) is used as the %d-dimensional measure. Set volume "
+                "to the Å^%d measure (e.g. the in-plane area of a slit).",
+                self._nd, int(getattr(system, "vol_dim", 3)), self._nd, self._nd)
         self._apply_xpt      = cfg.do_xpt
         self._do_desjarlais  = cfg.do_desjarlais
         self._vactype   = VELTYPE + 1 if self._molecular else 1
@@ -718,12 +732,22 @@ class xPTEngine:
                     "velocities (D / D_rot enabled) — keeping the "
                     "velocity array allocated."
                 )
+            n_comp = self._nd
+            if int(cfg.dimension) != 3:
+                # Size by what the reader delivers; the kept axes are chosen
+                # from the data once the frames are in (_resolve_velocity_axes).
+                n_comp = int(getattr(s, "vel_ncomp", 3))
+                if n_comp < int(cfg.dimension):
+                    raise ValueError(
+                        f"dimension = {cfg.dimension} needs at least "
+                        f"{cfg.dimension} velocity components per atom, but the "
+                        f"trajectory provides {n_comp}.")
             log.info(
                 "Allocating velocity array: shape=(%d, %d, %d, %d) dtype=float32",
-                self._vactype, n_total_frames, n_active_atoms, self._nd,
+                self._vactype, n_total_frames, n_active_atoms, n_comp,
             )
             self._vacvv = np.zeros(
-                (self._vactype, n_total_frames, n_active_atoms, self._nd), dtype=np.float32
+                (self._vactype, n_total_frames, n_active_atoms, n_comp), dtype=np.float32
             )
         if s.has_frame_charges:
             # Running sum for trajectory-averaged per-atom charges.
@@ -979,8 +1003,9 @@ class xPTEngine:
         _skip_full = self._skip_full_arrays_this_pass
 
         def _store_vacvv(ti: int, fi_: int, src: np.ndarray) -> None:
-            """Write ``src`` (shape (natom, 3)) into ``_vacvv[ti, fi_, :, :]``,
-            slicing by the atom mask when one is set."""
+            """Write ``src`` (shape (natom, n_comp), n_comp = the reader's
+            velocity components) into ``_vacvv[ti, fi_, :, :]``, slicing by the
+            atom mask when one is set."""
             if _mask is None:
                 self._vacvv[ti, fi_] = src.astype(np.float32)
             else:
@@ -1333,7 +1358,50 @@ class xPTEngine:
                 T_auto = cfg.temperature
             self._finalize_auto_nmd(T_auto)
 
+        if int(cfg.dimension) != 3 and self._vacvv.size > 0:
+            self._resolve_velocity_axes()
+
         log.info("Accumulated %d frames  Δt = %.4g ps", self._nsteps, self._vacdtime)
+
+    def _resolve_velocity_axes(self) -> None:
+        """Choose the velocity axes kept at d ≠ 3 and compact ``_vacvv``.
+
+        The buffer holds every component the reader delivered.  If that count
+        equals the gas dimension d, all are kept.  Otherwise the components
+        whose mean-square velocity is negligible (≤ 1e-6 of the largest, the
+        threshold ``_compute_dof`` uses) are dropped: a strictly 2D run written
+        as a 3-column dump (v_z ≡ 0) keeps 2 axes, a slit or channel keeps all
+        3 (its confined axis is thermal and enters the DoS as a vibrational
+        channel of a d-dimensional gas).  The choice is made on the first pass
+        and reused on later atom batches so every batch has the same shape.
+        """
+        d = int(self.cfg.dimension)
+        k = int(self._vacvv.shape[-1])
+        if self._vel_keep is None:
+            if k == d:
+                keep = tuple(range(k))
+            else:
+                ms = np.zeros(k)
+                for fi in range(self._vacvv.shape[1]):
+                    blk = self._vacvv[:, fi]
+                    ms += np.einsum("tna,tna->a", blk, blk, dtype=np.float64)
+                thr = 1e-6 * ms.max() if ms.max() > 0 else 0.0
+                keep = tuple(a for a in range(k) if ms[a] > thr)
+                if len(keep) < d:
+                    raise ValueError(
+                        f"dimension = {d}, but only {len(keep)} of the {k} "
+                        f"velocity components in the trajectory are non-zero.")
+            self._vel_keep = keep
+            axis = "xyzw"
+            log.info("dimension = %d: %d velocity component(s) kept (%s) of %d "
+                     "in the trajectory%s", d, len(keep),
+                     "".join(axis[a] if a < 4 else "?" for a in keep), k,
+                     "; the axes beyond d enter the DoS as vibrational "
+                     "channels" if len(keep) > d else "")
+        if len(self._vel_keep) != k:
+            self._vacvv = np.ascontiguousarray(
+                self._vacvv[..., list(self._vel_keep)])
+        self._nd = len(self._vel_keep)
 
 
     # ── Computation ───────────────────────────────────────────────────────────
@@ -1741,7 +1809,7 @@ class xPTEngine:
             # In-memory DoS is un-normalised (∫=3N); divide by the per-group
             # particle count to get the per-atom DoS the construction expects.
             if self.cfg.cage_entropy:
-                from pyxpt.thermo.utility import cage_memory_entropy
+                from pyxpt.thermo.utility import cage_memory_entropy, cage_guard
                 if self.cfg.hs_entropy != "rigorous":
                     log.warning("cage_entropy is designed for hs_entropy=rigorous; "
                                 "adding it on top of '%s' may double-correct.",
@@ -1754,10 +1822,13 @@ class xPTEngine:
                     # not the zero-padded/wrapped FFT tail (:nused)
                     C_sc = np.einsum('tii->t',
                                      vac_sum[gi, TRANS, :self._vacmaxf]) / self._nd
-                    # V_use is the total box volume [Å³]; result.volume is not yet
-                    # assigned at this point in the flow.
+                    # V_use is the d-dimensional measure of the box [Å^d];
+                    # result.volume is not yet assigned at this point in the flow.
                     _d = int(self.cfg.dimension)
                     _cage_arr: list = []
+                    # W_g = the baseline's own translational gas weight; None
+                    # only if the baseline pass did not run for this group.
+                    _wg = getattr(self, "_cage_wg_trans", {}).get(gi)
                     # env-gated save of the cage inputs for the SI gate/filter
                     # sensitivity sweep (CAGE_SAVE_INPUTS=<prefix>); diagnostic only.
                     import os as _os_cage
@@ -1768,7 +1839,8 @@ class xPTEngine:
                                  dos_total=dos[gi, TRANS, :nused] / cnt,
                                  dos_gas=dos_gas[gi, TRANS, :nused] / cnt,
                                  T_K=T_loc, mass_amu=grp.mass / cnt,
-                                 vol_per_atom=V_use / cnt, dimension=_d)
+                                 vol_per_atom=V_use / cnt, dimension=_d,
+                                 wg_base=np.nan if _wg is None else _wg)
                     dS = cage_memory_entropy(
                         self._vacdtime, C_sc, _freq_cm,
                         dos[gi, TRANS, :nused] / cnt,        # → per-atom total DoS
@@ -1778,11 +1850,12 @@ class xPTEngine:
                         ref="markov",
                         nf_run=self.cfg.cage_nf_run, taper=self.cfg.cage_taper,
                         tail_tol=self.cfg.cage_tail_tol,
+                        Wg_override=_wg,
                         label=f"grp{gi+1}", cage_out=_cage_arr,
-                        ws_form="both")
+                        ws_form="both", quadrature=self.cfg.cage_quadrature)
                     if not dS:
                         continue
-                    dS_q, dS_cl = dS
+                    dS_q, dS_cl = cage_guard(dS, _d, label=f"grp{gi+1}")
                     if self.cfg.cage_ws == "legacy":
                         dS_q = dS_cl
                     # stash the cage DoS for the .pwr writer (un-normalised, ∫=3N
@@ -1821,7 +1894,7 @@ class xPTEngine:
             _rot_ch = self._rot_type   # ROTAT or ANGUL, whichever is active
             _is_mol_rot = self._molecular and _rot_ch < self._vactype
             if self.cfg.cage_entropy_rot and _is_mol_rot:
-                from pyxpt.thermo.utility import cage_memory_entropy
+                from pyxpt.thermo.utility import cage_memory_entropy, cage_guard
                 if self.cfg.hs_entropy != "rigorous":
                     log.warning("cage_entropy_rot is designed for "
                                 "hs_entropy=rigorous; adding it on top of '%s' "
@@ -1875,14 +1948,15 @@ class xPTEngine:
                         T_loc, grp.mass / cnt, V_use / cnt,  # mass/vol unused (Wg_override)
                         prefactor=1.0 / d_rot, dimension=d_rot,
                         ref="markov",
-                        nf_run=self.cfg.cage_nf_run, taper=self.cfg.cage_taper,
+                        nf_run=self.cfg.cage_nf_run_rot, taper=self.cfg.cage_taper,
                         tail_tol=self.cfg.cage_tail_tol,
                         Wg_override=wsr,
                         label=f"grp{gi+1}-rot", cage_out=_cage_arr,
-                        ws_form="both")
+                        ws_form="both", quadrature=self.cfg.cage_quadrature)
                     if not dS:
                         continue
-                    dS_q, dS_cl = dS
+                    dS_q, dS_cl = cage_guard(dS, d_rot, label=f"grp{gi+1}-rot",
+                                             channel="rotational")
                     if self.cfg.cage_ws == "legacy":
                         dS_q = dS_cl
                     if _cage_arr:
@@ -2401,6 +2475,7 @@ class xPTEngine:
                                     for a in range(self._nd)])
                     if var.max() > 0:
                         n_active = int(np.sum(var > 1e-6 * var.max()))
+                self._dof_axes[gi] = n_active
                 vacDF[gi, 0] = float(n_active) * grp.natom
             else:
                 for mid in grp.mol_ids:
@@ -2612,12 +2687,13 @@ class xPTEngine:
         Identity used:
             scale = D_inf / D_PBC = 1 + (ξ k_B T) / (6π η L D_PBC)
         with L = V^(1/3) (group volume).  D_PBC is recovered from s0t via
-            D_cm2s = s0t · R · T / (12 c_light · m_total) × 1e5   (existing eq.)
+            D_cm2s = s0t · R · T / (4 d c_light · m_total) × 1e5
+        (``dos0_to_diffusivity``; 4 d = 12 in bulk).
         """
         if eta <= 0.0 or s0t <= 0.0 or gvol <= 0.0 or gmass <= 0.0 or nmol <= 0:
             return 1.0
-        # D_PBC in m²/s.  Same formula as engine.py:1872 but kept in SI.
-        D_cm2s = s0t * R * T_t / (12.0 * VLIGHT * gmass) * 1e5
+        # D_PBC, same relation as the reported diffusivity, then SI.
+        D_cm2s = dos0_to_diffusivity(s0t, T_t, gmass, int(self.cfg.dimension))
         D_m2s = D_cm2s * 1e-4
         if D_m2s <= 0.0:
             return 1.0

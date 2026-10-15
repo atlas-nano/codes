@@ -35,7 +35,7 @@ from pyxpt.constants import (
     PI, KB, H, R, VLIGHT, NA, CALTOJ, VelType, ModexPT,
 )
 from pyxpt.thermo.utility import (
-    hs_weighting, quantum_weights,
+    hs_weighting, quantum_weights, dos0_to_diffusivity,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -78,6 +78,10 @@ def integrate_thermo(engine: "xPTEngine",
     s     = engine.sys
     hs_eos = engine.cfg.hs_eos
     d_dim  = int(engine.cfg.dimension)        # translational dimensionality (3=bulk)
+    # Per-group translational gas weight of THIS baseline (per DoF), handed to the
+    # 3PT cage as its W_g so the excess moved to the gas side is weighted exactly as
+    # the baseline's gas.  Filled in the k == TRANS pass below.
+    engine._cage_wg_trans = {}
 
     # Pre-compute BMCSL parameters (σᵢ, ξ moments) once for all groups
     if hs_eos == "bmcsl":
@@ -158,6 +162,8 @@ def integrate_thermo(engine: "xPTEngine",
             wac_sol = np.where(u_arr > 0, _safe_ln, 0.0)
 
             wep = hs["wep"]; wsp = hs["wsp"]; wap = hs["wap"]; wmp = hs["wmp"]
+            if k == TRANS:
+                engine._cage_wg_trans[gi] = float(wsp)
             wcvp = hs["wcvp"]; wspd = hs["wspd"]
             wsr  = hs["wsr"];  war  = hs["war"];  wmr  = hs["wmr"]
             wer  = hs["wer"];  wcvr = hs["wcvr"]
@@ -291,7 +297,8 @@ def integrate_thermo(engine: "xPTEngine",
             result.A_quantum[gi, k] += Eo
             result.mu_quantum[gi, k] += Eo
 
-            # Diffusivity (cm²/s) — same formula for all velocity types.
+            # Diffusivity (cm²/s) — same formula for all velocity types;
+            # D = S(0) k_BT / (4 d m N) in d diffusion dimensions.
             # FSC: report D_inf rather than D_PBC.  Translational and
             # rotational get their own per-group scales; internal
             # vibrational modes are unaffected by Yeh-Hummer.
@@ -313,9 +320,8 @@ def integrate_thermo(engine: "xPTEngine",
                     scale = _fsc_t
                 else:
                     scale = 1.0
-                result.diffusivity[gi, k] = (
-                    result.S_dos0[gi, k] * R * T / (12.0 * VLIGHT * gmass)
-                ) * 1e5 * scale
+                result.diffusivity[gi, k] = dos0_to_diffusivity(
+                    result.S_dos0[gi, k], T, gmass, d_dim) * scale
 
     # ── For molecular mode: overwrite TOTAL column = sum(Trans + rot_type + IMVIB) ──
     if engine._molecular and vt > TOTAL:
@@ -568,9 +574,8 @@ def integrate_gas_solid_split(engine: "xPTEngine",
             result.Cv_classical_gas[gi, k] = Cvc_g_final
             result.S_dos0_gas[gi, k]       = dos_gas[gi, k, 0]
             if gmass > 0 and T > 0:
-                result.diffusivity_gas[gi, k] = (
-                    result.S_dos0_gas[gi, k] * R * T / (12.0 * VLIGHT * gmass)
-                ) * 1e5
+                result.diffusivity_gas[gi, k] = dos0_to_diffusivity(
+                    result.S_dos0_gas[gi, k], T, gmass, d_dim)
 
             # ── Store solid phase results ──────────────────────────────────
             # <-- BUGFIX 3: Same scaling fix for the solid components

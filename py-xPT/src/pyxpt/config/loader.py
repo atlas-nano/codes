@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .base import Config, TOPOLOGY_FORMAT_MAP, TRAJECTORY_FORMAT_MAP, validate
 from .thermo import parse_xpt, parse_md
+from .keycheck import RecordingParser, warn_unknown_keys
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,10 @@ def load(path: str | Path) -> Config:
         interpolation=None,
     )
     parser.read_string(raw)
+    # Record which keys the parsers touch so unrecognized ones can be
+    # reported: py-xPT reads by key test, so an unknown key is otherwise
+    # discarded silently and a deck can look configured and not be.
+    parser = RecordingParser(parser)
     cfg = Config()
 
     # ── [files] ───────────────────────────────────────────────────────────────
@@ -91,6 +96,8 @@ def load(path: str | Path) -> Config:
     # ── module parsers ────────────────────────────────────────────────────────
     parse_xpt(parser, cfg)
     parse_md(parser, cfg)
+
+    warn_unknown_keys(parser)
 
     validate(cfg)
     return cfg

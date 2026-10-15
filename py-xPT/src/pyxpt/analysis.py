@@ -135,7 +135,7 @@ def _run_batched(cfg: Config, system: System, engine,
     engine.set_atom_mask(None)
     log.info("Running xPT computation on accumulated vac_sum ...")
     result = xPTResult(system.ngrp, engine._vactype,
-                            engine._nused, engine._vacmaxf)
+                            engine._nused, engine._vacmaxf, engine._nd)
     return engine._compute_postvac(result, vac_sum_total)
 
 

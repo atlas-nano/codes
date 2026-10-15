@@ -196,6 +196,11 @@ class System:
         self.total_mass = 0.0
         self.has_frame_charges: bool = False      # True when trajectory dump contains "q" column
         self.has_induced_dipoles: bool = False    # True when dump contains "f_dipole[1..3]" (AMOEBA)
+        # Velocity components per atom delivered by iter_frames, and the
+        # dimension of the per-frame volume (Å^vol_dim).  3 for every reader
+        # except MD4D/RAWVEL, which delivers its meta ``dim``.
+        self.vel_ncomp: int = 3
+        self.vol_dim: int = 3
         self._cfg: Optional[Config] = None
         self._universe: Optional[object] = None   # mda.Universe if available
         self._pe_ke_warned: bool = False          # one-shot guard for duplicate-column warning
@@ -833,17 +838,23 @@ class System:
         Reads the ``.meta`` sidecar (dim, N, L_reduced, Tset, dt_reduced,
         velstride, sigma_A, epsilon_K, mass_amu).  Every atom is its own
         single-atom "molecule" (no rotational/vibrational decomposition), so
-        the engine takes the atomic translational path.  The velocity-space
-        dimension d is taken from the meta and must equal ``cfg.dimension``.
+        the engine takes the atomic translational path.  The number of
+        velocity components D is taken from the meta; ``cfg.dimension`` (the
+        gas dimension) must not exceed it.  D > d is the slit/channel mode,
+        where the frame volume is the D-dimensional measure and the d-dimensional
+        one has to be given as ``[system_properties] volume``.
         """
         from pyxpt.constants import KB, NA
         vel_path, meta_path = self._md4d_paths(cfg)
         meta = self._read_md4d_meta(meta_path)
         D = int(meta["dim"]); N = int(meta["N"])
-        if int(getattr(cfg, "dimension", 3)) != D:
+        d_cfg = int(getattr(cfg, "dimension", 3))
+        if d_cfg > D or (d_cfg == 3 and D != 3):
             raise RuntimeError(
                 f"trajectory_format=MD4D: meta dim={D} but cfg.dimension="
                 f"{cfg.dimension}; set [thermodynamics] dimension = {D}.")
+        self.vel_ncomp = D
+        self.vol_dim = D
         L_red = float(meta["L_reduced"]); Tstar = float(meta["Tset"])
         dt_red = float(meta["dt_reduced"]); velstride = int(meta.get("velstride", 1))
         sigma_A = float(meta.get("sigma_A", getattr(cfg, "lj_sigma", 3.405)))
