@@ -299,9 +299,9 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
     acks2_saddle_refused = 1;
     if (comm->me == 0)
       error->warning(FLERR, "samqeq: ASPC is not supported on the ACKS2 saddle ("
-                            "bond-softness or the gas ACKS2 path) -- IGNORING it and running the exact"
-                            "Born-Oppenheimer solve. The predictor does not satisfy the saddle's constraint"
-                            "rows, so an accepted corrector commits a charge error linear in aspc_rtol."
+                            "bond-softness or the gas ACKS2 path) -- IGNORING it and running the exact "
+                            "Born-Oppenheimer solve. The predictor does not satisfy the saddle's constraint "
+                            "rows, so an accepted corrector commits a charge error linear in aspc_rtol. "
                             "Drop `fix_modify {} aspc` from this deck; `fix_modify {} aspc saddle allow`"
                             "re-enables it behind the accept/reject gate if you are experimenting.", id, id);
   }
@@ -375,9 +375,9 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
   // holds, and such an iterate can pass the |q-q0|>50 e tripwire while being badly wrong (e.g. an ion-bearing
   // box under the diagonal preconditioner, where the same operator converges quickly under ILU -- a
   // preconditioner cannot change the answer). So: escalate once via saddle_fallback(), then refuse. The 10x
-  // band tolerates BiCGStab's early-exit quirk (see the note in BiCGStab) and catches gross failures.
-  // The gate keys on acks2_exhausted (budget exhausted or breakdown) AND the residual: BiCGStab's early exit can
-  // report ~1e-4 at tol 1e-5 on a converged solve, which is not a failure.
+  // band catches gross failures. The gate keys on acks2_exhausted (budget exhausted or breakdown) AND the
+  // residual. Every BiCGStab exit reports the residual of the iterate it returns, so (tol, 10*tol] is reachable
+  // only through breakdown, budget or a failed certification, which warn and are counted (SOLVER-DIAG nonconv=).
   {
     const double gross = 10.0 * tolerance;
     if (acks2_exhausted && acks2_relresid > gross) {     // exhausted/breakdown AND grossly off (see acks2_exhausted)
@@ -385,10 +385,10 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
       const int extra = saddle_fallback(b_s, s);
       if (extra > 0) matvecs += extra;
       if (extra < 0 || (acks2_exhausted && acks2_relresid > gross))
-        error->all(FLERR, "samqeq: ACKS2 saddle solve did not converge at step {} (rel-residual {:.2e} after"
-                          "{} matvecs, tolerance {:.1e}; {}) -- refusing to commit an unconverged charge set."
-                          "Remedies: `fix_modify {} precond ilu`, a larger"
-                          "`maxiter`. A monatomic-ion fragment has an almost empty X row, which makes this saddle"
+        error->all(FLERR, "samqeq: ACKS2 saddle solve did not converge at step {} (rel-residual {:.2e} after "
+                          "{} matvecs, tolerance {:.1e}; {}) -- refusing to commit an unconverged charge set. "
+                          "Remedies: `fix_modify {} precond ilu`, a larger "
+                          "`maxiter`. A monatomic-ion fragment has an almost empty X row, which makes this saddle "
                           "ill-conditioned under the diagonal preconditioner",
                    update->ntimestep, r_first, matvecs, tolerance,
                    extra < 0 ? "no further fallback available" : "the ILU retry did not converge either", id, id);
@@ -398,15 +398,20 @@ void FixACKS2Sam::pre_force(int /*vflag*/)
   // SOLVER-DIAG on the saddle path, as on the CG path. A permanently-rejecting corrector (every step
   // falling through to the full solve) is visible as acc/rej = 0/N.
   if (comm->me == 0 && (update->ntimestep == 0 || update->ntimestep % 200 == 0)) {
+    // nonconv= counts uncapped saddle solves returned above tolerance. BiCGStab appends rr= (cumulative residual
+    // replacements) and rec= (recurrence resid/b at the last converged exit; resid/b is then the TRUE residual).
+    const std::string rrtail = acks2_use_minres ? std::string()
+      : fmt::format(", rr={} rec={}", acks2_nreplace,      // rec=n/a until the first converged exit
+                    acks2_relresid_rec < 0.0 ? std::string("n/a") : fmt::format("{:.2e}", acks2_relresid_rec));
     if (aspc_on && aspc_saddle_allow)   // a REFUSED aspc would print a permanent 0/0 and read as "dead ASPC"
 
-      utils::logmesg(lmp, "samqeq SOLVER-DIAG step {}: {} {} matvecs, resid/b={:.2e}, ASPC acc/rej={}/{}\n",
+      utils::logmesg(lmp, "samqeq SOLVER-DIAG step {}: {} {} matvecs, resid/b={:.2e}, nonconv={}, ASPC acc/rej={}/{}{}\n",
                      update->ntimestep, acks2_use_minres ? "saddle-MINRES" : "saddle-BiCGStab",
-                     matvecs, acks2_relresid, aspc_naccept, aspc_nreject);
+                     matvecs, acks2_relresid, acks2_nonconv, aspc_naccept, aspc_nreject, rrtail);
     else
-      utils::logmesg(lmp, "samqeq SOLVER-DIAG step {}: {} {} matvecs, resid/b={:.2e}\n",
+      utils::logmesg(lmp, "samqeq SOLVER-DIAG step {}: {} {} matvecs, resid/b={:.2e}, nonconv={}{}\n",
                      update->ntimestep, acks2_use_minres ? "saddle-MINRES" : "saddle-BiCGStab",
-                     matvecs, acks2_relresid);
+                     matvecs, acks2_relresid, acks2_nonconv, rrtail);
   }
 
   calculate_Q();
@@ -554,7 +559,26 @@ int FixACKS2Sam::BiCGStab(double *b, double *x)
   // here; the sub-dominant charge-block admixture is a norm inhomogeneity (present in metal too).
   // Left UNSCALED by design.
   int nrestart = 0; const int maxrestart = 8; bool fresh = true;
-  for (i = 1; i < imax && rnorm / bnorm > tolerance; ++i) {
+  // The loop tests only the RECURRENCE residual (r = q - omega*y, q = r - alpha*z); b - Ax is formed once, above,
+  // and in floating point the two drift apart. A converged exit is therefore CERTIFIED against the true residual
+  // (one matvec) and, when that fails, the recurrence restarts from it (residual replacement), at most maxreplace
+  // times. The published acks2_relresid is the true residual of the returned x. Budget/breakdown exits are
+  // certified only when their recurrence residual is within tolerance.
+  // The saddle inverse amplifies the residual into the charges (charge error per unit resid/b ~10-200 for
+  // BiCGStab on the saddle, ~1 for MINRES), so the loop, the half-step exit and the certification STOP at
+  // tstop = acks2_stopscale*tolerance (`fix_modify <id> saddlestop <f>`, default 0.01). The user tolerance still
+  // decides nonconv=, the warnings, the ASPC gate and the no-commit gate.
+  int nreplace = 0; const int maxreplace = 3; bool moved = false;
+  acks2_relresid_rec = -1.0;
+  const double tstop = acks2_stopscale * tolerance;
+  // If b-Ax plateaus in (tstop, tol] (the attainable floor of an ill-conditioned saddle), each converged exit would
+  // fail certification and burn every replacement each step. Once tol is met, a replacement that did not lower the
+  // true residual ends the solve. At saddlestop 1 the window is empty.
+  double prev_true = -1.0;
+  i = 1;
+  for (;;) {
+  for (; i < imax && rnorm / bnorm > tstop; ++i) {
+    moved = true;
     rho = parallel_dot(r_hat, r, nn);
     if (rho == 0.0) {
       if (nrestart++ < maxrestart) { vector_copy(r_hat, r, nn); omega = 1.0; fresh = true; continue; }
@@ -588,13 +612,16 @@ int FixACKS2Sam::BiCGStab(double *b, double *x)
 
     tmp = parallel_dot(q, q, nn);
 
-    // early convergence check
-    // Note: tmp = |q|^2 (SQUARED, unnormalized) vs the linear-scale tolerance -- a dimensional
-    // oddity inherited from fix acks2/reaxff (inconsistent in metal units too). Kept as in
-    // fix acks2/reaxff: mechanical unit-scaling cannot fix it.
-    if (tmp < tolerance) {
-      vector_add(x, alpha, d, nn);
-      break;
+    // early convergence check on the half-step residual q = b - A(x + alpha d): the same relative criterion
+    // as the loop test on r, with the same norm, and rnorm set to the residual of the RETURNED iterate (exactly
+    // q). The guard itself stays: a vanishing q makes omega = sigma/|y|^2 below a 0/0.
+    {
+      const double qnorm = sqrt(tmp);
+      if (qnorm / bnorm <= tstop) {
+        vector_add(x, alpha, d, nn);
+        rnorm = qnorm;
+        break;
+      }
     }
 
     // pre-conditioning (diagonal by default; FixQEqSam may override with ILU)
@@ -623,20 +650,49 @@ int FixACKS2Sam::BiCGStab(double *b, double *x)
     }
     rho_old = rho;
   }
+  // certify a converged exit against the true residual b - Ax (loop comm path: d forward, z reverse)
+  if (!moved || rnorm / bnorm > tolerance) break;      // no new iterate, or a budget/breakdown exit: nothing to certify
+  acks2_relresid_rec = rnorm / bnorm;
+  vector_copy(d, x, nn);
+  pack_flag = 1;
+  comm->forward_comm(this); //Dist_vector(d);
+  more_forward_comm(d);
+  sparse_matvec_acks2(&H, &X, d, z);
+  pack_flag = 2;
+  comm->reverse_comm(this); //Coll_vector(z);
+  more_reverse_comm(z);
+  vector_sum(r , 1., b, -1., z, nn);
+  rnorm = parallel_norm(r, nn);
+  moved = false;
+  if (rnorm / bnorm <= tstop || i >= imax || nreplace >= maxreplace) break;
+  if (rnorm / bnorm <= tolerance && prev_true >= 0.0 && rnorm >= prev_true) break;   // at the floor, tol met
+  prev_true = rnorm;
+  nreplace++; acks2_nreplace++;                        // residual replacement: restart the recurrence from the true r
+  vector_copy(r_hat, r, nn); omega = 1.0; rho = 1.0; fresh = true;
+  }
 
-  acks2_relresid = rnorm / bnorm;   // expose the solve quality so the ASPC corrector can be gated on it
+  acks2_relresid = rnorm / bnorm;   // solve quality of the RETURNED x on every exit (true residual after a converged exit)
   acks2_exhausted = (omega == 0 || rho == 0 || i >= imax) ? 1 : 0;   // failure signature for the no-commit gate
+  if (!acks2_capped && acks2_relresid > tolerance) acks2_nonconv++;  // breakdown, budget, or certification failure
+  if (comm->me == 0 && !acks2_capped && !acks2_exhausted && acks2_relresid > tolerance && acks2_ntruewarn < 5) {
+    acks2_ntruewarn++;   // converged on the recurrence, still above tol in truth after maxreplace replacements
+    error->warning(FLERR, "samqeq: saddle BiCGStab TRUE residual {:.2e} > tolerance {:.1e} after {} residual "
+                   "replacement(s) at step {} (recurrence said {:.2e}); counted in nonconv=. Consider "
+                   "`fix_modify {} precond ilu` or a tighter `saddlestop`{}", acks2_relresid, tolerance, nreplace,
+                   update->ntimestep, acks2_relresid_rec, id, acks2_ntruewarn == 5 ? " (last such warning)" : "");
+  }
 
   if (comm->me == 0) {
     if (omega == 0 || rho == 0) {
       error->warning(FLERR,"Fix acks2/reaxff BiCGStab numerical breakdown, omega = {:.8}, rho = {:.8}",
                       omega,rho);
-    } else if (i >= imax && !acks2_capped) {
+    } else if (i >= imax && !acks2_capped && acks2_relresid > tolerance) {   // a budget exit that met tol
+                                                                               // (stopping at tstop) is not a failure
       // Inside the ASPC corrector the cap (imax = aspc_ncorr) is BY DESIGN, so "failed after n
       // iterations" every step is noise, not news -- the accept/reject gate is the real signal there.
       // Gated on acks2_capped, NOT on aspc_on, so a genuine non-convergence of the uncapped
       // fall-through solve still warns even with ASPC enabled.
-      error->warning(FLERR,"Fix acks2/reaxff BiCGStab convergence failed after {} iterations"
+      error->warning(FLERR,"Fix acks2/reaxff BiCGStab convergence failed after {} iterations "
                            "at step {}", i, update->ntimestep);
     }
   }
@@ -669,7 +725,9 @@ int FixACKS2Sam::acks2_minres(double *b, double *x)
   double beta1 = sqrt(parallel_dot(q, q, nn));
   // Report/gate on ||r||/||b||, the SAME normalisation BiCGStab uses. phibar/beta1 is ||r_k||/||r_0||,
   // which for a warm start is a DIFFERENT quantity, so it cannot share one aspc_rtol with BiCGStab.
-  // The loop's CONVERGENCE test below deliberately stays phibar/beta1.
+  // The loop's CONVERGENCE test is phibar/bnorm_m too: relative to the ENTRY residual, a warm start
+  // (||r0|| < ||b||) would stop tighter than asked and a bad predictor (||r0|| > ||b||) looser. Same footing as
+  // BiCGStab and qeq_minres. At a cold start x0 = 0, beta1 == bnorm_m bit-for-bit.
   double bnorm_m = parallel_norm(b, nn); if (bnorm_m == 0.0) bnorm_m = 1.0;
   if (beta1 == 0.0) { acks2_relresid = 0.0; acks2_relresid0 = 0.0; return 0; }   // exact warm start
   acks2_relresid0 = beta1 / bnorm_m;   // residual of the ENTRY guess x0 (= the ASPC predictor)
@@ -712,10 +770,10 @@ int FixACKS2Sam::acks2_minres(double *b, double *x)
       double w2 =(d[NN+i]-oldeps*q_hat[NN+i]-delta*p[NN+i])*denom; q_hat[NN+i]=p[NN+i]; p[NN+i]=w2; x[NN+i]+=phi*w2; } }
     if (last_rows_flag){ for(int k=2*NN;k<2*NN+2;k++){
       double wk=(d[k]-oldeps*q_hat[k]-delta*p[k])*denom; q_hat[k]=p[k]; p[k]=wk; x[k]+=phi*wk; } }
-    // Dimension note: phibar/beta1 = ||resid||/||b|| over the SAME augmented [q;u;rows] vector space
+    // Dimension note: phibar/bnorm_m = ||resid||/||b|| over the SAME augmented [q;u;rows] vector space
     // (unpreconditioned) -- same "ratio unit-invariant, no ev_scale factor derivable" analysis as the
     // BiCGStab rnorm/bnorm criterion above. Left UNSCALED by design. 1e-300 = IEEE underflow guard.
-    if (phibar/beta1 <= tolerance || beta <= 1.0e-300) break;
+    if (phibar/bnorm_m <= tolerance || beta <= 1.0e-300) break;
   }
   acks2_relresid = phibar / bnorm_m;  // ||r||/||b||, same normalisation as BiCGStab
   acks2_exhausted = (it > cap) ? 1 : 0;   // failure signature for the no-commit gate
@@ -723,7 +781,7 @@ int FixACKS2Sam::acks2_minres(double *b, double *x)
   // exhaust LAMMPS's warning budget and silence genuine warnings. A by-design cap is not news.
   if (it > cap && !acks2_capped && comm->me == 0)
     error->warning(FLERR, "samqeq ACKS2 MINRES did not converge ({} iters, resid/b={:.2e}) at step {}",
-                   it, phibar/beta1, update->ntimestep);
+                   it, phibar/bnorm_m, update->ntimestep);
   return it;
 }
 

@@ -1,0 +1,32 @@
+# REFUSAL PROBE: `fix_modify <id> saddlestop <f>` takes a factor in (0,1]; 0 is refused at parse time.
+# EXPECT: saddlestop: factor must be in (0,1]
+# Positive control: in.lammps in this directory (default saddlestop 0.01) runs.
+units           metal
+atom_style      full
+boundary        f f f
+lattice         sc 1.5
+region          box block -20 20 -20 20 -5 30 units box
+create_box      2 box
+region          slab block -3 3 -3 3 -0.1 0.1 units box
+create_atoms    2 region slab
+create_atoms    1 single 0.0 0.0 2.0 units box
+mass            * 12.0
+group           sub  type 2
+group           mol  type 1
+set             group sub mol 2
+set             group mol mol 1
+set             group all charge 0.0
+pair_style      zero 14.0
+pair_coeff      * *
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check no
+fix             beq sub qeq/sam 1 0.0 14.0 1.0e-10 iface_metal.param
+fix_modify      beq precond ilu
+fix_modify      beq saddlestop 0
+compute         cq all property/atom q
+compute         qmol mol reduce sum c_cq
+variable        qm equal c_qmol
+run             0
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"
+print           "${qm}" file pe.txt screen no
+write_dump      all custom charges.dump id type q modify sort id format line "%d %d %.12g"

@@ -79,7 +79,7 @@ void FixQEqSamKokkos<DeviceType>::init()
   // but the kk device paths (project_neutral_device, S7 self-check) index k_molecule unconditionally,
   // so refuse it here. Use fix qeq/sam (host) for bare solids.
   if (lr_ewald && !atom->molecule_flag)
-    error->all(FLERR, "fix qeq/sam/kk long-range: molecule-free (atom_style charge) systems are"
+    error->all(FLERR, "fix qeq/sam/kk long-range: molecule-free (atom_style charge) systems are "
                       "host-only; use fix qeq/sam");
 
   // Make both requests native KOKKOS requests (the kk neighbor build cannot serve
@@ -455,8 +455,8 @@ void FixQEqSamKokkos<DeviceType>::validate_matvecH()
   if (!device_kernel_ok()) { warn_shield_kk_once(); return; }
   if (lr_alpha > 0.0) {
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq/kk S1: lr_alpha={:.4g} > 0 (DSF/Ewald H) — the device H-block functor"
-                          "implements the tapered form only; skipping self-check (the device solve"
+      utils::logmesg(lmp, "samqeq/kk S1: lr_alpha={:.4g} > 0 (DSF/Ewald H) — the device H-block functor "
+                          "implements the tapered form only; skipping self-check (the device solve "
                           "is likewise excluded, see device_eligible()).\n", lr_alpha);
     return;
   }
@@ -525,7 +525,7 @@ void FixQEqSamKokkos<DeviceType>::validate_matvecH()
     if (d > maxdiff) maxdiff = d;
   }
   if (comm->me == 0)
-    utils::logmesg(lmp, "samqeq/kk S1 device H-block matvec: max|device-host| = {:.3e}"
+    utils::logmesg(lmp, "samqeq/kk S1 device H-block matvec: max|device-host| = {:.3e} "
                         "(inum={}, want ~0)\n", maxdiff, inum);
 }
 
@@ -638,7 +638,7 @@ void FixQEqSamKokkos<DeviceType>::validate_matvecX()
     if (d > maxdiff) maxdiff = d;
   }
   if (comm->me == 0)
-    utils::logmesg(lmp, "samqeq/kk S2 device X-block matvec: max|device-host| = {:.3e}"
+    utils::logmesg(lmp, "samqeq/kk S2 device X-block matvec: max|device-host| = {:.3e} "
                         "(inum={}, want ~0)\n", maxdiff, inum);
 }
 
@@ -707,8 +707,8 @@ void FixQEqSamKokkos<DeviceType>::validate_matvecFull()
   if (!device_kernel_ok()) { warn_shield_kk_once(); return; }
   if (lr_alpha > 0.0) {   // tapered-form functor only — same rationale as the S1 skip above
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq/kk S3: lr_alpha={:.4g} > 0 (DSF/Ewald H) — the device augmented functor"
-                          "implements the tapered H-block only; skipping self-check (the device"
+      utils::logmesg(lmp, "samqeq/kk S3: lr_alpha={:.4g} > 0 (DSF/Ewald H) — the device augmented functor "
+                          "implements the tapered H-block only; skipping self-check (the device "
                           "solve is likewise excluded, see device_eligible()).\n", lr_alpha);
     return;
   }
@@ -785,7 +785,7 @@ void FixQEqSamKokkos<DeviceType>::validate_matvecFull()
     if (du > maxdiff) maxdiff = du;
   }
   if (comm->me == 0)
-    utils::logmesg(lmp, "samqeq/kk S3 full augmented matvec: max|device-host| = {:.3e}"
+    utils::logmesg(lmp, "samqeq/kk S3 full augmented matvec: max|device-host| = {:.3e} "
                         "(inum={}, want ~0)\n", maxdiff, inum);
 }
 
@@ -936,6 +936,7 @@ void FixQEqSamKokkos<DeviceType>::device_add_reciprocal(
   const int nmax = atom->nmax;
   AtomKokkos *atomKK = (AtomKokkos *) atom;
   const double pref = force->qqrd2e, selfc = lr_self_meas;
+  eksp->set_operator_self(selfc, nullptr, 0, groupbit);   // as the host add_reciprocal (pe uses the solve's self term)
 
   /* ---- ALL-DEVICE path. ----------------------------------------------------------------------
      The trial charges are staged into the DEVICE q, so compute_vector_device is called with
@@ -1086,7 +1087,14 @@ int FixQEqSamKokkos<DeviceType>::run_device_bicgstab(double *b_host, double *x_o
   Kokkos::deep_copy(vrh, vr);
   double omega=1.0, rho=1.0, rho_old=1.0, alpha=1.0;
   int nrestart=0; const int maxrestart=8; bool fresh=true; int it=1;
-  for (; it<imax && rnorm/bnorm>tolerance; ++it) {
+  // As the host BiCGStab (fix_acks2_sam.cpp): stop at stopscale*tol, certify a converged exit against the true
+  // residual with residual replacement, and the floor guard.
+  int nreplace=0; const int maxreplace=3; bool moved=false; acks2_relresid_rec=-1.0;
+  const double tstop = acks2_stopscale * tolerance;
+  double prev_true = -1.0;
+  for (;;) {
+  for (; it<imax && rnorm/bnorm>tstop; ++it) {
+    moved = true;
     rho = dot(vrh, vr);
     if (rho==0.0) { if (nrestart++<maxrestart){ Kokkos::deep_copy(vrh,vr); omega=1.0; fresh=true; continue;} break; }
     if (!fresh) { double beta=(rho/rho_old)*(alpha/omega);
@@ -1096,7 +1104,8 @@ int FixQEqSamKokkos<DeviceType>::run_device_bicgstab(double *b_host, double *x_o
     matvec(vd, vz);
     alpha = rho / dot(vrh, vz);
     sum2(vq, 1.0, vr, -alpha, vz);
-    if (dot(vq,vq) < tolerance) { add(vx, alpha, vd); break; }
+    // same relative half-step exit as the host BiCGStab; rnorm refreshed so resid/b is the returned iterate's
+    { const double qn = sqrt(dot(vq,vq)); if (qn / bnorm <= tstop) { add(vx, alpha, vd); rnorm = qn; break; } }
     precond(vq, vqh);
     matvec(vqh, vy);
     double sigma=dot(vy,vq), yy=dot(vy,vy); omega=sigma/yy;
@@ -1105,8 +1114,27 @@ int FixQEqSamKokkos<DeviceType>::run_device_bicgstab(double *b_host, double *x_o
     if (omega==0.0) { if (nrestart++<maxrestart){ Kokkos::deep_copy(vrh,vr); rho=1.0; fresh=true; continue;} break; }
     rho_old = rho;
   }
+  if (!moved || rnorm/bnorm > tolerance) break;      // no new iterate, or budget/breakdown: nothing to certify
+  acks2_relresid_rec = rnorm / bnorm;
+  matvec(vx, vd); sum2(vr, 1.0, d_b, -1.0, vd);      // true r = b - M x
+  rnorm = nrm(vr); moved = false;
+  if (rnorm/bnorm <= tstop || it >= imax || nreplace >= maxreplace) break;
+  if (rnorm/bnorm <= tolerance && prev_true >= 0.0 && rnorm >= prev_true) break;   // at the floor, tol met
+  prev_true = rnorm;
+  nreplace++; if (x_out) acks2_nreplace++;               // the self-check (x_out null) does not count
+  Kokkos::deep_copy(vrh, vr); omega=1.0; rho=1.0; fresh=true;
+  }
 
   acks2_relresid = rnorm / bnorm;   // publish the final device residual for the ASPC accept gate
+  acks2_exhausted = (omega==0.0 || rho==0.0 || it>=imax) ? 1 : 0;   // failure signature for the no-commit gate, as the host
+  if (x_out && comm->me == 0 && !acks2_capped && !acks2_exhausted && acks2_relresid > tolerance && acks2_ntruewarn < 5) {
+    acks2_ntruewarn++;   // converged on the recurrence, still above tol in truth after maxreplace replacements (as the host)
+    error->warning(FLERR, "samqeq: saddle BiCGStab (device) TRUE residual {:.2e} > tolerance {:.1e} after {} residual "
+                   "replacement(s) at step {} (recurrence said {:.2e}); counted in nonconv=. Consider "
+                   "`fix_modify {} precond ilu` or a tighter `saddlestop`{}", acks2_relresid, tolerance, nreplace,
+                   update->ntimestep, acks2_relresid_rec, id, acks2_ntruewarn == 5 ? " (last such warning)" : "");
+  }
+  if (x_out && !acks2_capped && acks2_relresid > tolerance) acks2_nonconv++;   // same counter as the host solve
 
   pack_flag = 0;   // leave the comm flag in the base default (our SAMKK_FWD only fits during the solve)
 
@@ -1122,7 +1150,7 @@ int FixQEqSamKokkos<DeviceType>::run_device_bicgstab(double *b_host, double *x_o
     double maxdiff=0.0; int *mask=atom->mask;
     for (int i=0;i<nloc;i++) if (mask[i]&groupbit) { double d=fabs(h_x(i)-s_cpu[i]); if(d>maxdiff) maxdiff=d; }
     if (comm->me==0)
-      utils::logmesg(lmp, "samqeq/kk S5 device BiCGStab (nghost={}): {} iters, final ||Mx-b||/||b|| = {:.3e}"
+      utils::logmesg(lmp, "samqeq/kk S5 device BiCGStab (nghost={}): {} iters, final ||Mx-b||/||b|| = {:.3e} "
                           "(tol={:.1e}), max|s_dev-s_cpu| = {:.3e}\n", atom->nghost, it, res, tolerance, maxdiff);
   }
   return it;
@@ -1214,7 +1242,7 @@ void FixQEqSamKokkos<DeviceType>::validate_project_neutral()
   double maxdiff=0.0; for (int i=0;i<nloc;i++) if (mask[i]&groupbit){ double d=fabs(h_dv(i)-href[i]); if(d>maxdiff) maxdiff=d; }
   double gmax=maxdiff; if (comm->nprocs>1) MPI_Allreduce(&maxdiff,&gmax,1,MPI_DOUBLE,MPI_MAX,world);
   if (comm->me==0)
-    utils::logmesg(lmp, "samqeq/kk S7 device project_neutral: max|P_dev - P_host| = {:.3e}"
+    utils::logmesg(lmp, "samqeq/kk S7 device project_neutral: max|P_dev - P_host| = {:.3e} "
                         "(~0 => primitive correct)\n", gmax);
 }
 
@@ -1311,7 +1339,7 @@ void FixQEqSamKokkos<DeviceType>::qeq_matvec_device(Kokkos::View<double *, Devic
         hmat_ok = false;
         if (comm->me == 0)
           error->warning(FLERR, "samqeq/kk: stored-H needs {:.2f} GB and the allocation failed ({})"
-                                "— falling back to the matrix-free matvec, which re-evaluates every"
+                                "— falling back to the matrix-free matvec, which re-evaluates every "
                                 "pair kernel on every CG iteration",
                          (double) inum * maxn * 8.0 / 1073741824.0, e.what());
       }
@@ -1320,7 +1348,7 @@ void FixQEqSamKokkos<DeviceType>::qeq_matvec_device(Kokkos::View<double *, Devic
     }
     if (hmat_ok && !hmat_msg && comm->me == 0) {
       hmat_msg = true;
-      utils::logmesg(lmp, "samqeq/kk: stored-H device matvec active ({} x {} slots, {:.2f} GB) — the"
+      utils::logmesg(lmp, "samqeq/kk: stored-H device matvec active ({} x {} slots, {:.2f} GB) — the "
                           "pair kernels are evaluated once per solve instead of once per CG iteration\n",
                      inum, maxn, (double) inum * maxn * 8.0 / 1073741824.0);
     }
@@ -1443,6 +1471,30 @@ void FixQEqSamKokkos<DeviceType>::coulomb_field(double *x, double *out, bool pro
   }                                                                    // them assembled-away; callers read locals
 }
 
+/* ---- the full projected solve operator for host consumers outside qeq_cg -- see the header. The coulomb_field
+   pattern with the diagonal on: P((eta_i + ridge) x_i + H·x + recip·x). Under an engaged device solve the host CSR H
+   is not rebuilt, so the Lanczos estimate (ridge eig) and the ASPC-DIAG residual must not multiply it. ridge_cur is
+   whatever the caller set (estimate_lambda_min zeroes it for the BARE operator and restores it after). ----*/
+template<class DeviceType>
+void FixQEqSamKokkos<DeviceType>::lanczos_matvec(double *x, double *out)
+{
+  if (host_H_needed()) {                    // host H in use: the host matvec, on a current H
+    if (device_solve_on) ensure_host_H();
+    FixQEqSam::lanczos_matvec(x, out);
+    return;
+  }
+  const int nmax = atom->nmax, nloc = atom->nlocal;
+  upload_device_state();          // positions/lists/diagonal for THIS step
+  Kokkos::View<double *, DeviceType> dx("kk:lmx", nmax), dout("kk:lmout", nmax);
+  { auto h = Kokkos::create_mirror_view(dx);
+    for (int i = 0; i < nmax; i++) h(i) = (i < nloc) ? x[i] : 0.0;
+    Kokkos::deep_copy(dx, h); }
+  qeq_matvec_device(dx, dout, /*with_diag=*/true, /*with_proj=*/true);
+  { auto h = Kokkos::create_mirror_view_and_copy(LMPHostType(), dout);
+    for (int i = 0; i < nmax; i++) out[i] = (i < nloc) ? h(i) : 0.0;   // callers read local in-group rows only
+  }
+}
+
 /* ---- S8 one-time self-check: device qeq_matvec vs host FixQEqSam::qeq_matvec ----*/
 template<class DeviceType>
 void FixQEqSamKokkos<DeviceType>::validate_qeq_matvec()
@@ -1472,14 +1524,14 @@ void FixQEqSamKokkos<DeviceType>::validate_qeq_matvec()
   if (comm->nprocs>1) { MPI_Allreduce(&maxdiff,&gmax,1,MPI_DOUBLE,MPI_MAX,world);
                         MPI_Allreduce(&refmax,&grefmax,1,MPI_DOUBLE,MPI_MAX,world); }
   if (comm->me==0)
-    utils::logmesg(lmp, "samqeq/kk S8 device qeq_matvec (q-direct): max|M_dev - M_host| = {:.3e}"
+    utils::logmesg(lmp, "samqeq/kk S8 device qeq_matvec (q-direct): max|M_dev - M_host| = {:.3e} "
                         "(eta+H+recip+project; ~0 => operator correct)\n", gmax);
   // S8 guards the device operator: a device operator that is not the host's must not solve.
   // Collective decision
   // (gmax/grefmax are global), so every rank disables together.
   if (gmax > 1.0e-8 * (grefmax > 1.0 ? grefmax : 1.0)) {
     if (comm->me == 0)
-      error->warning(FLERR, "samqeq/kk S8: device qeq_matvec differs from the host operator by {:.3e} -- device"
+      error->warning(FLERR, "samqeq/kk S8: device qeq_matvec differs from the host operator by {:.3e} -- device "
                             "solve DISABLED for this run (falling back to the host CG)", gmax);
     device_solve_on = false;
   }
@@ -1515,10 +1567,16 @@ int FixQEqSamKokkos<DeviceType>::run_device_qcg(double *b_host, double *x_out)
   qeq_matvec_device(vx, vq);
   axpby(vr, 1.0, vb, -1.0, vq);
   precond(vr, vd); project_neutral_device(vd);
-  double bnorm=sqrt(dot(vb,vb)); if(bnorm==0.0) bnorm=1.0;
+  double bnorm=sqrt(dot(vb,vb)); if(bnorm==0.0) bnorm=1.0*ev_scale;   // the host qeq_cg's fallback (exact 1.0 in metal)
   double signew=dot(vr, vd);
+  if (cg_rhs_raw > 0.0 && sqrt(dot(vb,vb)) <= 1.0e-12*cg_rhs_raw) {   // zero-RHS guard: mirror of FixQEqSam::qeq_cg
+    axpby(vx, 0.0, vx, 0.0, vx); axpby(vr, 0.0, vr, 0.0, vr); axpby(vd, 0.0, vd, 0.0, vd); signew = 0.0; cg_zero_rhs++;
+  }
+  // the HOST stopping criterion: sqrt(sig)/|b| carries e/sqrt(E) units, so the raw `tolerance` would be sqrt(ev_scale)
+  // = 4.8x looser than the host in `units real` (exact /1.0 in metal: metal-units device results are unchanged)
+  const double tol_eff = tolerance / sqrt(ev_scale);
   int it=1;
-  for(; it<imax && sqrt(fabs(signew))/bnorm>tolerance; ++it){
+  for(; it<imax && sqrt(fabs(signew))/bnorm>tol_eff; ++it){
     qeq_matvec_device(vd, vq);
     double alpha=signew/dot(vd,vq);
     axpy(vx,  alpha, vd);
@@ -1530,6 +1588,9 @@ int FixQEqSamKokkos<DeviceType>::run_device_qcg(double *b_host, double *x_out)
   }
   auto hx=Kokkos::create_mirror_view_and_copy(LMPHostType(), vx);
   if(x_out) for(int i=0;i<nloc;i++) x_out[i]=hx(i);
+  // publish exactly what the host CG publishes (cg_relresid for the ASPC accept gate, cg_bnorm, the non-convergence
+  // warning + cg_nonconv, the SOLVER-DIAG line) through the shared epilogue
+  cg_finish(it, signew, bnorm, tol_eff);
   return it;
 }
 
@@ -1550,12 +1611,14 @@ void FixQEqSamKokkos<DeviceType>::validate_qcg()
   // host CG and device CG on the SAME b. Call FixQEqSam::qeq_cg explicitly: qeq_cg is virtual+overridden,
   // so a plain qeq_cg() would dispatch to the device override (=> device-vs-device) when devsolve is on.
   std::vector<double> xh(nmax,0.0), xd(nmax,0.0);
+  cg_selfcheck = true;                      // neither solve publishes cg_relresid/cg_bnorm/nonconv or prints DIAG
   int ith = FixQEqSam::qeq_cg(b.data(), xh.data());
   int itd = run_device_qcg(b.data(), xd.data());
+  cg_selfcheck = false;
   double maxdiff=0.0; for(int i=0;i<nloc;i++) if(mask[i]&groupbit){ double d=fabs(xd[i]-xh[i]); if(d>maxdiff) maxdiff=d; }
   double gmax=maxdiff; if(comm->nprocs>1) MPI_Allreduce(&maxdiff,&gmax,1,MPI_DOUBLE,MPI_MAX,world);
   if(comm->me==0)
-    utils::logmesg(lmp, "samqeq/kk S9 device q-direct CG: host {} iters / device {} iters,"
+    utils::logmesg(lmp, "samqeq/kk S9 device q-direct CG: host {} iters / device {} iters, "
                         "max|x_dev - x_host| = {:.3e} (~tol => CG correct)\n", ith, itd, gmax);
 }
 
@@ -1591,7 +1654,10 @@ int FixQEqSamKokkos<DeviceType>::qeq_cg(double *b, double *x)
     upload_device_state();                 // atoms moved this step -> refresh device positions/lists/params
     return run_device_qcg(b, x);           // x is the warm-start (predictor) + the output (qs)
   }
-  return FixQEqSam::qeq_cg(b, x);          // host fallback (default; byte-identical)
+  // host fallback (default; byte-identical). Under devsolve the step may have skipped the host compute_H (eligibility
+  // was decided in pre_force; the per-atom ridge, set inside the solve, ends it), so rebuild H if it is not current.
+  if (device_solve_on) ensure_host_H();
+  return FixQEqSam::qeq_cg(b, x);
 }
 
 /* ---- fix_modify <id> devsolve on|off : engage the S6 device solve (default off) ----*/

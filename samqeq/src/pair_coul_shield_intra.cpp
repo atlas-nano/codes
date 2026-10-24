@@ -219,7 +219,7 @@ void PairCoulShieldIntra::settings(int narg, char **arg)
     else if (strcmp(arg[k], "intra") == 0)   intra_only = 1;
     else if (strcmp(arg[k], "gaussian") == 0)  shield_gauss = SHIELD_GAUSSIAN;   // Gaussian erf(α_ij r)/r (PQEq form)
     else if (strcmp(arg[k], "pqeq") == 0)     // the keyword names the kernel (`gaussian`), not a force field
-      error->all(FLERR, "pair coul/shield/intra:" "the Gaussian shielding kernel keyword is `gaussian`, not `pqeq` (same kernel); replace `pqeq` with `gaussian` in the deck");
+      error->all(FLERR, "pair coul/shield/intra: " "the Gaussian shielding kernel keyword is `gaussian`, not `pqeq` (same kernel); replace `pqeq` with `gaussian` in the deck");
     else if (strcmp(arg[k], "cbrt") == 0)    shield_gauss = SHIELD_CBRT;   // (not "gauss" — collides with pair_style gauss)
     else if (strcmp(arg[k], "slater") == 0)  shield_gauss = SHIELD_SLATER; // Rick Slater-overlap J(r), JCP 101,6141
     else if (strcmp(arg[k], "lambda") == 0) {
@@ -275,7 +275,7 @@ void PairCoulShieldIntra::settings(int narg, char **arg)
       }
       break;
     }
-    else error->all(FLERR, "pair_style coul/shield/intra: unknown keyword {}"
+    else error->all(FLERR, "pair_style coul/shield/intra: unknown keyword {} "
                           "(use intra|all cbrt|gaussian|slater [2s ...])", arg[k]);
   }
   if (allocated) {
@@ -349,7 +349,7 @@ void PairCoulShieldIntra::build_slater_tables()
       slater_tabs[idx].build(is2s[ti] != 0, is2s[tj] != 0, gamma[ti][ti], gamma[tj][tj], cut_global);
     }
   if (comm->me == 0)
-    utils::logmesg(lmp, "samqeq: pair coul/shield/intra Slater-overlap J(r) tables built ({} unique type"
+    utils::logmesg(lmp, "samqeq: pair coul/shield/intra Slater-overlap J(r) tables built ({} unique type "
                         "pairs, {} pts each, r in [{:.3g},{:.3g}])\n", npairs,
                         slater_tabs.empty() ? 0 : slater_tabs[0].npts,
                         slater_tabs.empty() ? 0.0 : slater_tabs[0].rmin, cut_global);
@@ -371,10 +371,10 @@ void PairCoulShieldIntra::init_list(int id, NeighList *ptr)
   if (atom->nbonds > 0)
     for (int k = 1; k <= 3; k++)
       if (neighbor->special_flag[k] == 0)
-        error->all(FLERR, "Pair coul/shield/intra: 1-{} bonded pairs are dropped from the neighbor list"
-                   "(special_bonds lj 0 coul 0 for that hop and no kspace_style), so the shielded intramolecular"
-                   "correction never sees them and the intramolecular Coulomb silently vanishes. Add a kspace_style"
-                   "(the pairs are then kept with factor_coul 0 and the physics is complete), or give the hop a tiny"
+        error->all(FLERR, "Pair coul/shield/intra: 1-{} bonded pairs are dropped from the neighbor list "
+                   "(special_bonds lj 0 coul 0 for that hop and no kspace_style), so the shielded intramolecular "
+                   "correction never sees them and the intramolecular Coulomb silently vanishes. Add a kspace_style "
+                   "(the pairs are then kept with factor_coul 0 and the physics is complete), or give the hop a tiny "
                    "nonzero lj weight, e.g. `special_bonds lj 1e-8 1e-8 1e-8` with your coul weights", k+1);
   // Refuse `exclude molecule/intra` only: that exclusion removes exactly the intramolecular pairs
   // this style exists for, while kspace still sums them -- the shielded correction, coul/long's compensation and the
@@ -382,9 +382,9 @@ void PairCoulShieldIntra::init_list(int id, NeighList *ptr)
   // fix gcmc / widom / charge/regulation add an internal group exclusion to switch trial molecules off, legitimately.
   for (int i = 0; i < neighbor->nex_mol; i++)
     if (neighbor->ex_mol_intra[i])
-      error->all(FLERR, "Pair coul/shield/intra: neigh_modify exclude molecule/intra is active. It removes the"
-                 "intramolecular pairs this style corrects while kspace still sums them, so the shielded correction,"
-                 "coul/long's compensation and the qeq/sam solve coupling vanish (charge errors of several tenths of e)."
+      error->all(FLERR, "Pair coul/shield/intra: neigh_modify exclude molecule/intra is active. It removes the "
+                 "intramolecular pairs this style corrects while kspace still sums them, so the shielded correction, "
+                 "coul/long's compensation and the qeq/sam solve coupling vanish (charge errors of several tenths of e). "
                  "Remove it; keep molecules rigid with fix rigid/shake instead");
 }
 
@@ -404,8 +404,8 @@ double PairCoulShieldIntra::init_one(int i, int j)
   if (iondamp_on && iondamp_b[i][j] > 0.0 && comm->me == 0) {
     double dfdx; double fres = samqeq_tt_damp(iondamp_b[i][j]*cut[i][j], iondamp_n[i][j], dfdx);
     if (1.0 - fres > 1.0e-3)
-      error->warning(FLERR, "pair coul/shield/intra iondamp {}-{}: TT damping not converged at the pair"
-                            "cutoff (1-f(b*cut)={:.2e} at cut={:.2f}) -- raise this pair's cutoff (to the"
+      error->warning(FLERR, "pair coul/shield/intra iondamp {}-{}: TT damping not converged at the pair "
+                            "cutoff (1-f(b*cut)={:.2e} at cut={:.2f}) -- raise this pair's cutoff (to the "
                             "fix's swb) or b", i, j, 1.0 - fres, cut[i][j]);
   }
   return cut[i][j];

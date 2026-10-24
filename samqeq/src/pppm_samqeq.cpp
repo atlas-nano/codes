@@ -24,6 +24,7 @@
 #include "pppm_samqeq.h"
 
 #include "atom.h"
+#include "comm.h"
 #include "domain.h"
 #include "error.h"
 #include "fft3d_wrap.h"
@@ -84,6 +85,7 @@ PPPMSamqeq::~PPPMSamqeq()
 void PPPMSamqeq::init()
 {
   PPPM::init();
+  op_self_logged = 0;   // one operator-self log line per run
 
   // ★ RUN BOUNDARY: PPPM::init() -- called at EVERY `run` command -- deallocates + reallocates ALL grid
   // arrays (our allocate() memsets them to 0), and greensfn/fk*/vg are only recomputed by PPPM::setup(),
@@ -99,6 +101,33 @@ void PPPMSamqeq::init()
     error->all(FLERR, "pppm/samqeq does not support kspace_modify slab nozforce");
   if (domain->triclinic)
     error->all(FLERR, "pppm/samqeq does not support triclinic boxes");
+}
+
+/* ----------------------------------------------------------------------
+   resize_mesh_from_charges (see samqeq_kspace.h): re-size the mesh iff the CURRENT mesh misses the requested accuracy
+   for the CURRENT (solved) charges at the held g_ewald. Deciding on the current mesh -- not by re-running the grid
+   search and comparing -- matters: stock init() searches the grid at the initial g_ewald estimate and only then
+   adjust_gewald()s it, so a fresh search at the adjusted value can pick a finer grid with no charge change at all.
+   Both error estimates are linear in q2, so a warm start never fires and a cold start (q2 ~ 0 at init) does. The new
+   mesh is the stock search at the held g_ewald (gewaldflag forced on: the real-space pair cached g_ewald at
+   init_style), adopted via the full init() a `run` does.
+------------------------------------------------------------------------- */
+
+bool PPPMSamqeq::resize_mesh_from_charges(int *od, int *nd)
+{
+  if (gridflag) return false;                        // kspace_modify mesh: the user's grid is authoritative
+  od[0] = nx_pppm; od[1] = ny_pppm; od[2] = nz_pppm;
+  qsum_qsq(0);                                       // q2 from the solved charges
+  h_x = domain->xprd/nx_pppm; h_y = domain->yprd/ny_pppm; h_z = domain->zprd*slab_volfactor/nz_pppm;
+  if (compute_df_kspace() <= accuracy) return false;
+  struct HoldGewald { int &f; int s; ~HoldGewald() { f = s; } } hold{gewaldflag, gewaldflag};
+  gewaldflag = 1;
+  set_grid_global();
+  nd[0] = nx_pppm; nd[1] = ny_pppm; nd[2] = nz_pppm;
+  const bool finer = (bigint) nd[0]*nd[1]*nd[2] > (bigint) od[0]*od[1]*od[2];
+  nx_pppm = od[0]; ny_pppm = od[1]; nz_pppm = od[2];
+  if (finer) init();                                 // re-derives the same finer mesh at the held g_ewald
+  return finer;
 }
 
 /* ----------------------------------------------------------------------
@@ -266,6 +295,18 @@ void PPPMSamqeq::compute(int eflag, int vflag)
                                // Under slabflag==1 this also runs the inherited PPPM::slabcorr()
                                // (force/energy dipole correction), whose non-neutral qsum terms
                                // see the fresh qsum too — matching compute_vector's slab term exactly.
+  // Swap the analytic self term for the one the qeq/sam solve uses (samqeq_kspace.h). Collective.
+  if (eflag_global || eflag_atom) {
+    const double qscale = qqrd2e * scale;   // as PPPM::compute's local (not a PPPM member)
+    const double de = operator_self_delta(atom, world, g_ewald, qscale, eflag_atom ? eatom : nullptr);
+    if (eflag_global) energy += de;
+    if (eflag_global && op_self_grpbit && !op_self_logged && comm->me == 0) {
+      op_self_logged = 1;
+      utils::logmesg(lmp, "pppm/samqeq: E_long uses the solve's self term: {} vs 2g/sqrt(pi)={:.10f}; "
+                     "delta E = {:.12g} at step {}\n", op_self_atom ? std::string("per-atom c_i")
+                     : fmt::format("scalar c={:.10f}", op_self_c), 2.0*g_ewald/MathConst::MY_PIS, de, update->ntimestep);
+    }
+  }
 }
 
 /* ----------------------------------------------------------------------

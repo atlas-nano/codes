@@ -43,6 +43,9 @@ using namespace FixConst;
 double FixQEqSam::solve_diag_of(int i)
 {
   const int t = atom->type[i];
+  // The XL charge-force matvec takes the BARE harmonic diagonal: the anharmonic gradient enters it exactly once,
+  // through anh_force_add. The secant on eta_diag stays for the XL mass weighting, which reads eta_diag directly.
+  if (xl_bare_diag) return eta[t];
   if (lr_quartic) return eta[t] + (eta_diag[i] - (eta0 ? eta0[t] : eta[t]));
   return eta[t];
 }
@@ -108,7 +111,7 @@ static inline double omp_sum(double a, double b) { return a + b; }
 -------------------------------------------------------------------------*/
 void FixQEqSam::pre_force(int vflag)
 {
-  if (lr_xl) return;                                   // XL mode: charges propagated in initial/final_integrate
+  if (lr_xl) { refresh_self_peratom_after_reneighbor(); return; }   // XL mode: charges propagated in initial/final_integrate
   if (!lr_ewald) {
     // Bondsoft on the gas path: compute_X dispatches to FixACKS2Sam::compute_X when
     // lr_bondsoft is set, and that reads bcut[i][j]. The lazy allocation below sits
@@ -119,7 +122,7 @@ void FixQEqSam::pre_force(int vflag)
     return;
   }
 
-  if (update->ntimestep % nevery) return;
+  if (update->ntimestep % nevery) { refresh_self_peratom_after_reneighbor(); return; }
 
   // SKIP the re-solve at a run-BOUNDARY setup (ntimestep>0: 2nd+ run, restart, NVT->NVE, heating): a cold
   // re-solve can over-polarize a state the previous run held. The previous run's CONVERGED charges in atom->q
@@ -130,16 +133,17 @@ void FixQEqSam::pre_force(int vflag)
   // with no solve at all, so the skip is logged: always for `run 0` (nothing will ever re-solve), once per fix
   // otherwise (the first in-loop pre_force re-solves; loop decks must not flood the log).
   if (setup_resolve && comm->me == 0 && (update->nsteps == 0 || !setup_skip_logged)) {
-    utils::logmesg(lmp, "samqeq: setup solve SKIPPED at run-boundary step {} (2nd+ run / restart): the setup forces"
+    utils::logmesg(lmp, "samqeq: setup solve SKIPPED at run-boundary step {} (2nd+ run / restart): the setup forces "
                         "use the STORED atom->q{} -- use `reset_timestep 0` before the run to force a solve\n",
                    update->ntimestep,
-                   update->nsteps == 0 ? "; this `run 0` performs NO charge solve, so model changes since the"
+                   update->nsteps == 0 ? "; this `run 0` performs NO charge solve, so model changes since the "
                                          "charges were stored (gself, params, ...) are NOT reflected"
                                        : " (the first in-loop step re-solves)");
     if (update->nsteps != 0) setup_skip_logged = 1;
   }
   if (setup_resolve) { comm_v = atom->q; pack_flag = 6; comm->forward_comm(this);
-                                         return; }
+                       setup_arm_operator_self();        // E_long self term without a solve
+                       return; }
 
   lr_alpha = force->kspace->g_ewald;   // authoritative (g_ewald is set in kspace->setup, after fix init)
   NN = atom->nlocal + atom->nghost;
@@ -158,8 +162,8 @@ void FixQEqSam::pre_force(int vflag)
     lr_pin_gchk = lr_alpha;
     const double lim = 2.0*lr_alpha/MathConst::MY_PIS, rel = (lr_self_meas - lim)/lim;
     if (fabs(rel) > 0.02 && comm->me == 0)
-      error->warning(FLERR, "samqeq: pinned recip_self {:.5f} differs by {:+.1f}% from 2 g_ewald/sqrt(pi) = {:.5f}"
-                            "at the current g_ewald {:.6f}; a pin is valid only for the split it was measured at."
+      error->warning(FLERR, "samqeq: pinned recip_self {:.5f} differs by {:+.1f}% from 2 g_ewald/sqrt(pi) = {:.5f} "
+                            "at the current g_ewald {:.6f}; a pin is valid only for the split it was measured at. "
                             "Drop `fix_modify {} recip_self` to calibrate, or re-measure the pin",
                      lr_self_meas, 100.0*rel, lim, lr_alpha, id);
   }
@@ -233,7 +237,7 @@ void FixQEqSam::quartic_scf()
     if (dq < scf_tol) break;
   }
   if (it >= quartic_niter && dq >= scf_tol && comm->me == 0 && warn_budget(nwarn_picard))   // budgeted
-    error->warning(FLERR, "samqeq: quartic Picard SCF did not converge in {} iterations (dq={:.3e}) at step {}"
+    error->warning(FLERR, "samqeq: quartic Picard SCF did not converge in {} iterations (dq={:.3e}) at step {} "
                           "[{} so far]", quartic_niter, dq, update->ntimestep, nwarn_picard);
   aspc_on = as;
 
@@ -291,21 +295,21 @@ void FixQEqSam::finish_recip_self(double rs, int nprobe)
     const double rel = fabs(rs - ref)/fabs(ref);
     const bool samecounts = (lr_nx == lr_pppm->nx_pppm && lr_ny == lr_pppm->ny_pppm && lr_nz == lr_pppm->nz_pppm);
     if (samecounts && rel > 0.02)
-      error->all(FLERR, "samqeq: grid reciprocal self-term jumped {:.2f}% on re-calibration at an"
-                        "UNCHANGED grid ({:.5f} -> {:.5f} raw; g_ewald x{:.5f} divided out). This silently"
-                        "re-tunes the model: the self-term is subtracted from the solve diagonal, so a low value"
-                        "over-stiffens it and de-polarizes the charges. Pin the calibration with"
-                        "`fix_modify {} recip_self {:.6f}` to reproduce the previous operator, or investigate the"
+      error->all(FLERR, "samqeq: grid reciprocal self-term jumped {:.2f}% on re-calibration at an "
+                        "UNCHANGED grid ({:.5f} -> {:.5f} raw; g_ewald x{:.5f} divided out). This silently "
+                        "re-tunes the model: the self-term is subtracted from the solve diagonal, so a low value "
+                        "over-stiffens it and de-polarizes the charges. Pin the calibration with "
+                        "`fix_modify {} recip_self {:.6f}` to reproduce the previous operator, or investigate the "
                         "probe-pair selection / the kspace backend state.",
                  100.0*rel, lr_self_meas, rs, ascale, id, lr_self_meas);
     else if (samecounts && rel > 0.005 && comm->me == 0)
-      error->warning(FLERR, "samqeq: grid reciprocal self-term moved {:.2f}% on re-calibration at an"
-                            "unchanged grid ({:.5f} -> {:.5f} raw; g_ewald x{:.5f} divided out); treat results"
+      error->warning(FLERR, "samqeq: grid reciprocal self-term moved {:.2f}% on re-calibration at an "
+                            "unchanged grid ({:.5f} -> {:.5f} raw; g_ewald x{:.5f} divided out); treat results "
                             "either side as different models until checked", 100.0*rel, lr_self_meas, rs, ascale);
     else if (!samecounts && rel > 0.02 && comm->me == 0)
-      error->warning(FLERR, "samqeq: grid reciprocal self-term moved {:.2f}% on re-calibration across a mesh"
-                            "change {}x{}x{} -> {}x{}x{} ({:.5f} -> {:.5f} raw; g_ewald x{:.5f} divided out). A"
-                            "mesh-count change alone moves it far less on a converged mesh -- check the kspace"
+      error->warning(FLERR, "samqeq: grid reciprocal self-term moved {:.2f}% on re-calibration across a mesh "
+                            "change {}x{}x{} -> {}x{}x{} ({:.5f} -> {:.5f} raw; g_ewald x{:.5f} divided out). A "
+                            "mesh-count change alone moves it far less on a converged mesh -- check the kspace "
                             "state; treat results either side as different models until checked",
                      100.0*rel, lr_nx, lr_ny, lr_nz, lr_pppm->nx_pppm, lr_pppm->ny_pppm, lr_pppm->nz_pppm,
                      lr_self_meas, rs, ascale);
@@ -318,7 +322,7 @@ void FixQEqSam::finish_recip_self(double rs, int nprobe)
     MPI_Allreduce(MPI_IN_PLACE, &rmin, 1, MPI_DOUBLE, MPI_MIN, world);
     MPI_Allreduce(MPI_IN_PLACE, &rmax, 1, MPI_DOUBLE, MPI_MAX, world);
     if (rmin != rmax)
-      error->all(FLERR, "samqeq: recip_self disagrees across ranks ({:.10g} vs {:.10g}) -- the"
+      error->all(FLERR, "samqeq: recip_self disagrees across ranks ({:.10g} vs {:.10g}) -- the "
                         "calibration must be a collective, decomposition-independent measurement", rmin, rmax);
   }
 
@@ -347,18 +351,18 @@ void FixQEqSam::finish_recip_self(double rs, int nprobe)
       const bool boxmoved = fabs(vr - 1.0) > 0.05;
       if (drift > 0.02) {
         if (boxmoved)
-          error->all(FLERR, "samqeq: grid reciprocal self-term DRIFTED {:.2f}% from the FIRST calibration at this"
-                            "{}x{}x{} mesh ({:.5f} raw at step {} -> {:.5f} now, calibration #{}; box volume x{:.3f}"
-                            "since then) -- the BOX changed at fixed mesh counts, so the grid spacing and the operator"
-                            "changed with it (a phase change, or a pinned `kspace_modify mesh` under NPT); this is not"
-                            "a calibration random walk. If the volume change is intended, let the mesh follow the box"
+          error->all(FLERR, "samqeq: grid reciprocal self-term DRIFTED {:.2f}% from the FIRST calibration at this "
+                            "{}x{}x{} mesh ({:.5f} raw at step {} -> {:.5f} now, calibration #{}; box volume x{:.3f} "
+                            "since then) -- the BOX changed at fixed mesh counts, so the grid spacing and the operator "
+                            "changed with it (a phase change, or a pinned `kspace_modify mesh` under NPT); this is not "
+                            "a calibration random walk. If the volume change is intended, let the mesh follow the box "
                             "(drop the pinned mesh) or re-origin with `fix_modify {} recip_self <value>`.",
                      100.0*drift, nx, ny, nz, lr_self_first, lr_first_step, rs, lr_ncalib, vr, id);
-        error->all(FLERR, "samqeq: grid reciprocal self-term DRIFTED {:.2f}% from the FIRST calibration at this"
-                          "{}x{}x{} mesh ({:.5f} raw at step {} -> {:.5f} now, calibration #{}; box volume x{:.3f}"
-                          "since then) -- a random walk of"
-                          "sub-2% steps that the previous-value check cannot see; the operator differs from the"
-                          "one this run started with. Use `fix_modify {} recip_probes 16` (deterministic"
+        error->all(FLERR, "samqeq: grid reciprocal self-term DRIFTED {:.2f}% from the FIRST calibration at this "
+                          "{}x{}x{} mesh ({:.5f} raw at step {} -> {:.5f} now, calibration #{}; box volume x{:.3f} "
+                          "since then) -- a random walk of "
+                          "sub-2% steps that the previous-value check cannot see; the operator differs from the "
+                          "one this run started with. Use `fix_modify {} recip_probes 16` (deterministic "
                           "multi-probe) or pin the origin with `fix_modify {} recip_self {:.6f}`.",
                    100.0*drift, nx, ny, nz, lr_self_first, lr_first_step, rs, lr_ncalib, vr, id, id, lr_self_first);
       }
@@ -366,8 +370,8 @@ void FixQEqSam::finish_recip_self(double rs, int nprobe)
       if (band > lr_drift_band) {              // warn once per 0.5% band, not at every re-calibration
         lr_drift_band = band;
         if (comm->me == 0)
-          error->warning(FLERR, "samqeq: grid reciprocal self-term has drifted {:.2f}% from the FIRST calibration"
-                                "at this mesh ({:.5f} raw at step {} -> {:.5f}, calibration #{}; box volume x{:.3f}"
+          error->warning(FLERR, "samqeq: grid reciprocal self-term has drifted {:.2f}% from the FIRST calibration "
+                                "at this mesh ({:.5f} raw at step {} -> {:.5f}, calibration #{}; box volume x{:.3f} "
                                 "since then{}); treat results either side as different models until checked",
                          100.0*drift, lr_self_first, lr_first_step, rs, lr_ncalib, vr,
                          boxmoved ? " -- the box changed at fixed mesh counts" : "");
@@ -381,15 +385,18 @@ void FixQEqSam::finish_recip_self(double rs, int nprobe)
     // G3: disclose the spread. A wide spread means the homogeneous-scalar model is strained
     // on this grid and the single subtracted value is a poorer approximation for every atom.
     if (nprobe > 1)
-      utils::logmesg(lmp, "samqeq: calibrated grid reciprocal self-term recip_self={:.5f} +/- {:.5f} (raw,"
+      utils::logmesg(lmp, "samqeq: calibrated grid reciprocal self-term recip_self={:.5f} +/- {:.5f} (raw, "
                           "K={} deterministic probes) = {:.4f} eV/e (subtracted so the QEq diagonal stays = eta)\n",
                      lr_self_meas, lr_self_sigma, nprobe, lr_self_meas*force->qqrd2e/ev_scale);
     else
-      utils::logmesg(lmp, "samqeq: calibrated grid reciprocal self-term recip_self={:.5f} (raw)"
+      utils::logmesg(lmp, "samqeq: calibrated grid reciprocal self-term recip_self={:.5f} (raw) "
                           "= {:.4f} eV/e (subtracted so the QEq diagonal stays = eta)\n",
                      lr_self_meas, lr_self_meas*force->qqrd2e/ev_scale);
+    // full-precision value on a stable line, for pinning a solve-less balance deck to this run's operator
+    // (`fix_modify <id> recip_self <c>`). Format fixed: "samqeq: recip_self_full <c %.17g> step <n>".
+    utils::logmesg(lmp, "samqeq: recip_self_full {:.17g} step {}\n", lr_self_meas, update->ntimestep);
     if (nprobe > 1 && lr_self_sigma*force->qqrd2e/ev_scale > 0.35)
-      error->warning(FLERR, "samqeq: recip_self spread over probes is {:.3f} eV/e -- the homogeneous"
+      error->warning(FLERR, "samqeq: recip_self spread over probes is {:.3f} eV/e -- the homogeneous "
                             "self-term is a poor approximation on this grid; consider a finer mesh",
                      lr_self_sigma*force->qqrd2e/ev_scale);
   }
@@ -441,20 +448,40 @@ bool FixQEqSam::measure_recip_probe(tagint tA, tagint &tB, double hmax, double &
   if (comm->me==ownA) { xA[0]=x[A][0]; xA[1]=x[A][1]; xA[2]=x[A][2]; }
   MPI_Bcast(xA,3,MPI_DOUBLE,ownA,world);
 
-  // partner: the pinned tag, or the nearest owned group atom to A, min-image, tie-broken by LOWER TAG
-  struct { double d; int t; } cand, best;
-  cand.d = 1.0e300; cand.t = INT_MAX;
+  // partner: the pinned tag, or the nearest owned group atom to A, min-image, tie-broken by LOWER TAG. A TIE is any
+  // distance within dtie of the nearest, not bit-exact equality: in SHAKE'd water the two O-H distances agree to
+  // ~1e-15 A, so trajectory jitter of a few 1e-15 A (Kokkos atomics, a rank-count or build change) would flip the
+  // partner between runs and move recip_self by ~3e-6 raw (~2e-5 e in the charges). Two rank-consistent reductions:
+  // (1) the global nearest distance; (2) the lowest tag among candidates within dtie of it.
+  const double dtie = 1.0e-6;                                   // Angstrom-scale in every unit set used here
+  double dloc = 1.0e300;
+  for (int pass = 0; pass < 2; pass++) {
+    double dmin = 0.0;
+    if (pass == 1) MPI_Allreduce(&dloc,&dmin,1,MPI_DOUBLE,MPI_MIN,world);
+    if (pass == 1 && dmin > 1.0e299) return false;
+    int tloc = INT_MAX;
+    for (int i=0;i<atom->nlocal;i++) {
+      if (!(mask[i]&groupbit) || tag[i]==tA || (tB > 0 && tag[i]!=tB)) continue;
+      double dx=x[i][0]-xA[0], dy=x[i][1]-xA[1], dz=x[i][2]-xA[2];
+      domain->minimum_image(FLERR,dx,dy,dz);
+      double d = sqrt(dx*dx+dy*dy+dz*dz);
+      if (hmax > 0.0 && (d < 0.1 || d > hmax)) continue;       // G2: probe-validity window (probe route only)
+      if (pass == 0) { if (d < dloc) dloc = d; }
+      else if (d <= dmin + dtie && (int)tag[i] < tloc) tloc = (int)tag[i];
+    }
+    if (pass == 1) { int tbest = INT_MAX; MPI_Allreduce(&tloc,&tbest,1,MPI_INT,MPI_MIN,world); tB = (tagint)tbest; }
+  }
+  // the chosen partner's OWN distance (it enters erf(alpha d)/d below), from its owner
+  struct { double d; int t; } best;
+  best.t = (int)tB;
+  double dsel = 1.0e300;
   for (int i=0;i<atom->nlocal;i++) {
-    if (!(mask[i]&groupbit) || tag[i]==tA || (tB > 0 && tag[i]!=tB)) continue;
+    if (!(mask[i]&groupbit) || (int)tag[i] != best.t) continue;
     double dx=x[i][0]-xA[0], dy=x[i][1]-xA[1], dz=x[i][2]-xA[2];
     domain->minimum_image(FLERR,dx,dy,dz);
-    double d = sqrt(dx*dx+dy*dy+dz*dz);
-    if (hmax > 0.0 && (d < 0.1 || d > hmax)) continue;         // G2: probe-validity window (probe route only)
-    if (d < cand.d || (d == cand.d && (int)tag[i] < cand.t)) { cand.d=d; cand.t=(int)tag[i]; }
+    dsel = sqrt(dx*dx+dy*dy+dz*dz);
   }
-  MPI_Allreduce(&cand,&best,1,MPI_DOUBLE_INT,MPI_MINLOC,world);
-  if (best.d > 1.0e299) return false;
-  tB = (tagint)best.t;
+  MPI_Allreduce(&dsel,&best.d,1,MPI_DOUBLE,MPI_MIN,world);
 
   // both owners set their own charge; PPPM sums over all ranks' owned atoms, so A and B may live
   // on different ranks, so no co-residency is required.
@@ -478,8 +505,8 @@ bool FixQEqSam::measure_recip_probe(tagint tA, tagint &tB, double hmax, double &
     int empty_loc = (comm->me == ownA && prec[A] == 0.0) ? 1 : 0, empty = 0;
     MPI_Allreduce(&empty_loc, &empty, 1, MPI_INT, MPI_MAX, world);
     if (empty)
-      error->all(FLERR, "samqeq: recip_self probe tag {}: the reciprocal potential at the probe atom is IDENTICALLY"
-                        "ZERO for a +1/-1 pair -- the kspace backend returned an empty operator (zeroed or stale"
+      error->all(FLERR, "samqeq: recip_self probe tag {}: the reciprocal potential at the probe atom is IDENTICALLY "
+                        "ZERO for a +1/-1 pair -- the kspace backend returned an empty operator (zeroed or stale "
                         "device grid/weight state at a run boundary?); refusing to calibrate on it", tA);
   }
 
@@ -542,7 +569,7 @@ bool FixQEqSam::calibrate_recip_self_probes()
       // nn 2.88 A vs hmax 1.84 A) falls back to the single pair.
       if (comm->me == 0)
         utils::logmesg(lmp, "samqeq: recip_self: probe tag {} has no partner within the G2 window [0.1, {:.3f}] A"
-                            "-- the default K=16 probe calibration falls back to the single-pair route for this"
+                            "-- the default K=16 probe calibration falls back to the single-pair route for this "
                             "group (set `fix_modify {} recip_probes 16` explicitly to make this an error)\n",
                        (tagint)ptag[k], hmax, id);
       for (int i=0;i<nall;i++) qa[i]=qsave[i];
@@ -570,7 +597,7 @@ void FixQEqSam::calibrate_recip_self()
   // restart-carried); every RE-calibration re-measures the SAME tagged pair by minimum image, so there are no
   // run-boundary re-draws (a PBC-straddling pair, or a different point of the ~0.3-0.5 eV/e per-atom spread).
   // The pair is a property of the SYSTEM, not of the decomposition. First calibration: A = the LOWEST GLOBAL
-  // TAG in the group, B = its nearest group atom (min-image, tie -> lower tag; no distance window), measured by
+  // TAG in the group, B = its nearest group atom (min-image; distances within 1e-6 tie -> lower tag; no distance window), measured by
   // measure_recip_probe() wherever the two atoms live.
   tagint tA = lr_tagA, tB = lr_tagB;
   const bool fresh = (tA <= 0);
@@ -584,7 +611,7 @@ void FixQEqSam::calibrate_recip_self()
   }
   double rs = 0.0;
   if (!measure_recip_probe(tA, tB, 0.0, rs))
-    error->all(FLERR, "samqeq: recip_self calibration needs >=2 fix-group atoms (probe tag {} has no group"
+    error->all(FLERR, "samqeq: recip_self calibration needs >=2 fix-group atoms (probe tag {} has no group "
                       "partner{})", tA, fresh ? "" : " -- its cached partner left the group");
   lr_tagA = tA; lr_tagB = tB;
   if (fresh && comm->me == 0)
@@ -612,12 +639,15 @@ bool FixQEqSam::grid_changed()
       (lr_pppm->nz_pppm != lr_nz)) return true;
   // PPPM::init() re-derives g_ewald from qsum_qsq() at EVERY run start, and q2 = Σq² tracks the live FQ
   // charges, so the auto-tuned g_ewald moves at run boundaries from charge changes alone; an exact !=
-  // compare would trip every time. Gate g_ewald on the same 0.1% relative test as the box lengths.
-  // Charge-driven retunes can still exceed it (e.g. +0.34% between data-file and solved charges of a
-  // TIP4P-FQ liquid), and then recalibrating is correct: recip_self is a function of g_ewald, so freezing
-  // it while g_ewald moves leaves the diagonal inconsistent with the operator actually applied (the
-  // recalib_on_grid_change test case checks this). Sentinel (-1, pre-first-calibration) stays exact.
-  if (lr_gewald > 0.0) { if (fabs(gw - lr_gewald) > 1.0e-3*lr_gewald) return true; }
+  // compare would trip every time on the LEGACY single-pair route, whose re-draw is not deterministic, so
+  // that route gates g_ewald on the same 0.1% relative test as the box lengths. The deterministic K-probe
+  // route (recip_probes > 0, the default) is reproducible and recalibrates on ANY g_ewald change: recip_self
+  // enters both the solve's diagonal and pe (-1/2 c Sum q^2, see add_reciprocal), so a value kept across even a
+  // sub-0.1% retune offsets pe for the whole run by up to 0.1% of the grid self energy. Recalibrating is what
+  // keeps the diagonal consistent with the operator actually applied (the recalib_on_grid_change test case
+  // checks this). Sentinel (-1, pre-first-calibration) stays exact.
+  const double gtol = lr_recip_probes > 0 ? 1.0e-12 : 1.0e-3;
+  if (lr_gewald > 0.0) { if (fabs(gw - lr_gewald) > gtol*lr_gewald) return true; }
   else if (gw != lr_gewald) return true;
   // recip_self also scales with the grid SPACING: under NPT the box changes at FIXED counts (PPPM setup()
   // rescales, counts stay) so the {nx,ny,nz,g_ewald} signature alone goes silently stale. Re-arm on a
@@ -650,6 +680,64 @@ bool FixQEqSam::grid_changed()
    i≠j sum — no extra reported self-energy), and the on-site χq+½ηq² is reported separately by compute_scalar,
    so q* is variational w.r.t. pe + E_self. (The DSF path lr_ewald=0 differs: coul/dsf reports a per-atom
    e_self ∝ q² in pe that the solve's bare-η diagonal omits — a FORCELESS offset, see compute_H setup.)*/
+/* ----------------------------------------------------------------------
+   setup_arm_operator_self(): pppm/samqeq's E_long uses the self term the solve removes, handed over in
+   add_reciprocal, i.e. by a solve. A run-boundary setup that SKIPS the solve (`run 0` balance decks, 2nd+ runs)
+   arms it here whenever the scalar value is known (pinned `recip_self`, or calibrated earlier), so pe at a given
+   (x, q) does not depend on whether a solve ran in this process. Uncalibrated, or the per-atom route (its array is
+   indexed by local atom and may be stale across a re-neighbor): E_long stays analytic, and a warning says so once.
+------------------------------------------------------------------------- */
+void FixQEqSam::setup_arm_operator_self()
+{
+  if (!lr_ewald || !eksp) return;
+  // PPPM::init re-derives g_ewald at every run start; the self term handed to E_long must be the one for THIS g, so
+  // recalibrate here when the grid signature moved (the operator is charge-independent; same call as the solve path)
+  if (lr_calibrated && !lr_self_peratom && !lr_self_pinned && !lr_nrecip && grid_changed()) calibrate_recip_self();
+  if (lr_calibrated && !lr_self_peratom && std::isfinite(lr_self_meas)) {
+    eksp->set_operator_self(lr_self_meas, nullptr, 0, groupbit);
+    return;
+  }
+  if (lr_self_peratom && !lr_nrecip) {   // per-atom route: fill for this setup's atom order (setup rebuilt the lists)
+    nn = list->inum; ilist = list->ilist; numneigh = list->numneigh; firstneigh = list->firstneigh;
+    compute_self_peratom_now();
+    eksp->set_operator_self(lr_self_meas, lr_self_atom, lr_self_atom_nmax, groupbit);
+    return;
+  }
+  eksp->clear_operator_self();   // nothing calibrated: no earlier push may stay armed
+  if (!opself_skip_warned && comm->me == 0) {
+    opself_skip_warned = 1;
+    error->warning(FLERR, "samqeq: run-boundary setup without a solve and no calibrated recip_self -- pppm/samqeq E_long "
+                          "uses the ANALYTIC 2g/sqrt(pi) self term here, not the solve's, so pe differs from a solving run's "
+                          "at the same (x, q) by 1/2*qqrd2e*(2g/sqrt(pi) - c)*Sum q^2. Pin `fix_modify {} recip_self <c>` to "
+                          "the solving run's calibrated c (logged as recip_self_full) to compare energies", id);
+  }
+}
+
+/* ----------------------------------------------------------------------
+   refresh_self_peratom_after_reneighbor(): a step without a solve (nevery skip, legacy XL) still reports E_long, whose
+   operator self term under `recip_self peratom` is indexed by local atom. A reneighbor on that step re-ordered the
+   atoms, so refill the per-atom coefficients and re-push them. One fill per reneighbor on such steps; collective, and
+   every input is rank-uniform (deck state, neighbor->ago).
+------------------------------------------------------------------------- */
+void FixQEqSam::refresh_self_peratom_after_reneighbor()
+{
+  if (!lr_self_peratom || lr_nrecip || !eksp || neighbor->ago != 0) return;
+  nn = list->inum; ilist = list->ilist; numneigh = list->numneigh; firstneigh = list->firstneigh;
+  compute_self_peratom_now();
+  eksp->set_operator_self(lr_self_meas, lr_self_atom, lr_self_atom_nmax, groupbit);
+}
+
+/* ----------------------------------------------------------------------
+   ensure_host_H(): rebuild the CSR H when its build stamp does not cover this step and neighbor list. Host decks build H
+   in every pre_force before any consumer, so the stamp always matches there and this is one compare. Under an engaged
+   device solve the host build is skipped; a host consumer that runs anyway (the MINRES fallback, a host CG after a
+   mid-step change of device eligibility) must not multiply the previous geometry.
+------------------------------------------------------------------------- */
+void FixQEqSam::ensure_host_H()
+{
+  if (h_build_ncalls != neighbor->ncalls || h_build_step != update->ntimestep) compute_H();
+}
+
 void FixQEqSam::add_reciprocal(double *x, double *b)
 {
   double *q = atom->q; int *mask = atom->mask;
@@ -668,11 +756,13 @@ void FixQEqSam::add_reciprocal(double *x, double *b)
   // the inputs, then error out -- a silent all-zero charge set is worse than a stop.
   for (int ii = 0; ii < nn; ii++) { int i=ilist[ii]; if(!(mask[i]&groupbit)) continue;
     if (!std::isfinite(prec[i]) || !std::isfinite(x[i]))
-      error->one(FLERR, "samqeq add_reciprocal: non-finite value at local atom {} (tag {}): prec={} x={}"
+      error->one(FLERR, "samqeq add_reciprocal: non-finite value at local atom {} (tag {}): prec={} x={} "
                         "recip_self={} alpha={} -- pppm/samqeq compute_vector returned NaN/Inf",
                  i, atom->tag[i], prec[i], x[i], selfc, lr_alpha); }
   if (!lr_self_peratom && !std::isfinite(selfc))
     error->all(FLERR, "samqeq add_reciprocal: calibrated recip_self is non-finite ({})", selfc);
+  // hand pppm/samqeq the self term this operator removes, so its E_long matches the solve's functional
+  eksp->set_operator_self(selfc, lr_self_peratom ? lr_self_atom : nullptr, lr_self_atom_nmax, groupbit);
   if (lr_self_peratom) {                                  // exact per-atom grid self removed
     for (int ii = 0; ii < nn; ii++) { int i=ilist[ii]; if(!(mask[i]&groupbit)) continue;
       b[i] += pref*(prec[i] - lr_self_atom[i]*x[i]);
@@ -843,7 +933,7 @@ void FixQEqSam::qeq_matvec(double *x, double *out)
   auto tw = [&](const char *stage) {
     for (int ii = 0; ii < nn; ii++) { int i=ilist[ii]; if (!(mask[i]&groupbit)) continue;
       if (!std::isfinite(out[i]))
-        error->one(FLERR, "samqeq qeq_matvec TRIPWIRE4: non-finite out[{}] (tag {}) after stage '{}' ; x={}"
+        error->one(FLERR, "samqeq qeq_matvec TRIPWIRE4: non-finite out[{}] (tag {}) after stage '{}' ; x={} "
                           "diag={} nn={} H.m={}", i, atom->tag[i], stage, x[i], solve_diag_of(i), nn, H.m); } };
   tw("diagonal");
   csr_matvec_add(x, out);                                           // out[i]+=H.val*x[j]; out[j]+=H.val*x[i]
@@ -1114,8 +1204,8 @@ int FixQEqSam::qeq_cg(double *b, double *x)
     for (int ii = 0; ii < nn; ii++) { int i = ilist[ii]; if (!(mask[i] & groupbit)) continue;
       if (!(Hdia_inv[i] > 0.0) || !std::isfinite(Hdia_inv[i])) { if (ibad < 0) ibad = i; nbad++; } }
     if (nbad)
-      error->one(FLERR, "samqeq qeq_cg: {} in-group atoms have a non-positive/non-finite Jacobi diagonal"
-                        "(first: local {} tag {} Hdia_inv={} eta[type]={} solve_diag_of={}"
+      error->one(FLERR, "samqeq qeq_cg: {} in-group atoms have a non-positive/non-finite Jacobi diagonal "
+                        "(first: local {} tag {} Hdia_inv={} eta[type]={} solve_diag_of={} "
                         "lr_quartic={} ridge_cur={} nn={}) -- the preconditioner was never filled on this path",
                  nbad, ibad, atom->tag[ibad], Hdia_inv[ibad], eta[atom->type[ibad]], solve_diag_of(ibad),
                  lr_quartic, ridge_cur, nn); }
@@ -1141,6 +1231,24 @@ int FixQEqSam::qeq_cg(double *b, double *x)
   project_neutral(q_d, b, b, &bnorm_sq);                            // keep search direction in the subspace
   double bnorm = sqrt(bnorm_sq); if (bnorm==0.0) bnorm = 1.0*ev_scale;  // fallback stands in for an eV/e-normed |b| (inert: b==0 => resid 0)
   double signew = qeq_dot(q_r, q_d);
+  // ZERO-RHS GUARD. A single homogeneous fragment (every row the same chi, no field, no fixed charges, q0 = 0) has
+  // P(-chi) == 0 up to round-off: |b| here is ~1e-15 while the RELATIVE criterion sqrt(signew)/|b| <= tol can never
+  // be met, so the loop below would run to imax on round-off vectors and the three-term recurrence would amplify
+  // them without bound (measured on a 45-atom conductor slab at zero field: net cell charge from 2e-7 e up to
+  // hundreds of e depending on maxiter and box length). The exact solution of A x = 0 on the subspace is x = 0 for
+  // ANY warm start. Decided on the RHS itself: |P b| <= 1e-12 |b_raw| (b_raw = the unprojected RHS, stored by the
+  // main solve just before its projection; 0 = another caller => inert) means the projection annihilated the RHS
+  // => x = r = d = 0, signew = 0: the loop does not run, resid/b reports 0, nothing warns. Every other deck takes
+  // the same path as before (the test reads values, it changes none).
+  if (cg_rhs_raw > 0.0 && sqrt(bnorm_sq) <= 1.0e-12 * cg_rhs_raw) {
+    for (int ii=0; ii<nn; ii++){ int i=ilist[ii]; if(mask[i]&groupbit){ x[i]=0.0; q_r[i]=0.0; q_d[i]=0.0; } }
+    signew = 0.0; cg_zero_rhs++;
+    if (comm->me == 0 && cg_zero_rhs_logged < 3) { cg_zero_rhs_logged++;
+      utils::logmesg(lmp, "samqeq: projected RHS is zero to round-off at step {} (|P b| = {:.2e} vs |b| = {:.2e}): a "
+                          "homogeneous fragment at zero field has q = q0 exactly -- CG skipped (its relative criterion "
+                          "resid/|b| is undefined here; {} such solve(s) so far)\n",
+                     update->ntimestep, sqrt(bnorm_sq), cg_rhs_raw, cg_zero_rhs); }
+  }
   // TRIPWIRE 3: a non-finite or negative CG scalar at the first iteration is reported with its inputs.
   if (comm->me == 0 && update->ntimestep == 0 && (!std::isfinite(signew) || !std::isfinite(bnorm_sq) || signew < 0.0)) {
     double rr = qeq_dot(q_r, q_r), dd = qeq_dot(q_d, q_d), bb = 0.0;
@@ -1177,6 +1285,16 @@ int FixQEqSam::qeq_cg(double *b, double *x)
 #endif
     { for (int ii=0; ii<nn; ii++){ int i=ilist[ii]; if(mask[i]&groupbit) q_d[i]=q_p[i]+beta*q_d[i]; } }
   }
+  cg_finish(it, signew, bnorm, tol_eff);             // the shared epilogue (below)
+  return it;
+}
+
+/* The CG epilogue, shared by the host qeq_cg above and the device run_device_qcg (Kokkos fix): cg_relresid and cg_bnorm
+   (the ASPC accept gate and the committed-residual report read them), the budgeted non-convergence warning, and the
+   periodic SOLVER-DIAG line, in one format for both solvers. */
+void FixQEqSam::cg_finish(int it, double signew, double bnorm, double tol_eff)
+{
+  if (cg_selfcheck) return;   // a synthetic-RHS self-check is not the user's solve: leave the published state alone
   cg_relresid = sqrt(fabs(signew))/bnorm;            // expose for the ASPC quality gate
   cg_bnorm = bnorm;                                  // the ASPC committed-residual report uses the same |b|
   // warn only on a GENUINE non-convergence -- residual still above tol_eff at the cap --
@@ -1206,7 +1324,6 @@ int FixQEqSam::qeq_cg(double *b, double *x)
                      nwarn_ridge > 0 ? fmt::format(", ridge={:.3g} (engaged {} solves)", ridge_cur/ev_scale, nwarn_ridge)
                                      : std::string());
   }
-  return it;
 }
 
 /* projected MINRES (Paige–Saunders), unpreconditioned. Solves Ã·x=b on the per-molecule-neutral
@@ -1384,7 +1501,8 @@ double FixQEqSam::estimate_lambda_min(int m)
   double *ad = new double[m]; double *bo = new double[m];        // ad[j]=diag; bo[j]=off-diag after row j
   double bprev = 0.0; int mm = 0;
   for (int j = 0; j < m; j++) {
-    qeq_matvec(vcur, w);                                         // w = Ã₀·vcur (projected)
+    lanczos_matvec(vcur, w);                                     // w = Ã₀·vcur (projected), through the hook: the
+                                                                 // device matvec under an engaged device solve
     double aj = qeq_dot(vcur, w);
     ad[j] = aj; mm = j+1;
     for (int ii=0; ii<nn; ii++){ int i=ilist[ii]; if(mask[i]&groupbit) w[i] -= aj*vcur[i] + bprev*vprev[i]; }
@@ -1410,12 +1528,12 @@ double FixQEqSam::estimate_lambda_min(int m)
     const bool moving = dl > 0.05*ev_scale;
     if (!lmin_logged)
       utils::logmesg(lmp, "samqeq: ridge eig lambda_min {:.4f} after {} Lanczos steps (it moved {:.4f} over the last 10"
-                          " steps{}); engage target floor+delta = {:.4f}\n", lmin, mm, dl, moving ? " -- NOT converged:"
+                          " steps{}); engage target floor+delta = {:.4f}\n", lmin, mm, dl, moving ? " -- NOT converged: "
                           "an upper bound that may hide a negative mode; raise m or set delta" : "",
                      lam_floor + ridge_delta);
     else if (moving)
-      error->warning(FLERR, "samqeq: ridge eig lambda_min {:.4f} still moved {:.4f} over the last 10 of {} Lanczos"
-                            "steps at step {} -- the estimate is an UPPER bound and may hide a negative mode; raise m"
+      error->warning(FLERR, "samqeq: ridge eig lambda_min {:.4f} still moved {:.4f} over the last 10 of {} Lanczos "
+                            "steps at step {} -- the estimate is an UPPER bound and may hide a negative mode; raise m "
                             "(`fix_modify {} ridge eig <floor> <m>`, m >= 60 for interface cells). Warned once.",
                      lmin, dl, mm, update->ntimestep, id);
     lmin_logged = (lmin_logged == 0) ? 1 : (moving ? 2 : 1);
@@ -1473,8 +1591,8 @@ void FixQEqSam::build_molinv()
   MPI_Allreduce(MPI_IN_PLACE, mvmm, 2, MPI_INT, MPI_MIN, world);
   if (mvmm[0] != -mvmm[1]) {                         // verdicts DIVERGED across ranks
     if (!molinv_desync_note && comm->me == 0)
-      error->warning(FLERR, "samqeq: build_molinv cache validity diverged across ranks at step {}"
-                            "(per-rank atom-storage regrow; expected under migration). Recovered by a"
+      error->warning(FLERR, "samqeq: build_molinv cache validity diverged across ranks at step {} "
+                            "(per-rank atom-storage regrow; expected under migration). Recovered by a "
                             "collective rebuild",
                      update->ntimestep);
     molinv_desync_note = 1;                          // one-shot; set on ALL ranks (stays rank-uniform)
@@ -1486,7 +1604,7 @@ void FixQEqSam::build_molinv()
         int c = (mr >= 0 && mr < (tagint)maxmol_) ? mol2c[mr] : -1;
         if (c < 0)   // invariant violated (an in-group mol id outside the cached active set): abort loudly
                      // (LAMMPS error->one convention) rather than solve with a corrupted projector.
-          error->one(FLERR, "samqeq: cached molecule map is stale (raw mol id {} not in the cached active"
+          error->one(FLERR, "samqeq: cached molecule map is stale (raw mol id {} not in the cached active "
                      "set) at step {}", (long)mr, update->ntimestep);
         cmol[i] = c; }
     } else {
@@ -1551,6 +1669,7 @@ void FixQEqSam::build_molinv()
 void FixQEqSam::add_fixed_charge_field()
 {
   double **x = atom->x; double *q = atom->q; int *type = atom->type, *mask = atom->mask;
+  tagint *mol = atom->molecule;   // lr_ewald=1 intramolecular test (NULL without molecule IDs)
   double a = lr_alpha, pref = force->qqrd2e;
   for (int i = 0; i < atom->nmax; i++) fixq_field[i] = 0.0;
 
@@ -1592,6 +1711,13 @@ void FixQEqSam::add_fixed_charge_field()
       double rsq = dx*dx+dy*dy+dz*dz;
       if (rsq > swb*swb || rsq < 1e-10) continue;
       double r = sqrt(rsq);
+      if (lr_ewald == 1 && !lr_nrecip && !(mol && mol[i] != 0 && mol[i] == mol[j])) {
+        // lr_ewald=1 shields INTRA-molecular pairs only: compute_H's inter branch is bare 1/r, and the scope check makes
+        // the pair (no `all`) bare there too. A fixed ion in another molecule therefore acts through bare 1/r on the
+        // solve as on pe/forces (mu = dpe/dQ). Same molecule test as compute_H.
+        fi += (erfc(a*r)/r) * q[j];                            // Ewald real-space of bare 1/r (net with the reciprocal)
+        continue;
+      }
       double shielded = shielded_coulomb(type[i], type[j], r);  // cbrt J_shield or Gaussian (consistent w/ compute_H)
       if (lr_nrecip) fi += shielded * taper_poly(r) * q[j];    // taper-cutoff: full tapered shielded field, no reciprocal
       else fi += (shielded - (1.0 - erfc(a*r))/r) * q[j];      // Ewald real-space (net with the reciprocal = shielded)
@@ -1619,7 +1745,7 @@ bool FixQEqSam::freeze_overpolarized(double maxq)
   if (lr_qfreeze <= 0.0 || maxq <= lr_qfreeze) { freeze_nconsec = 0; return false; }
   freeze_nconsec++;
   if (comm->me == 0 && (freeze_nconsec <= 3 || (freeze_nconsec % 100) == 0))
-    error->warning(FLERR, "samqeq: over-polarized solve (max|q-q0|={:.3g} > qfreeze={:.3g}) at step {} -> FREEZING"
+    error->warning(FLERR, "samqeq: over-polarized solve (max|q-q0|={:.3g} > qfreeze={:.3g}) at step {} -> FREEZING "
                    "charges at the previous step ({} consecutive)", maxq, lr_qfreeze, update->ntimestep,
                    (long)freeze_nconsec);
   if (freeze_max > 0 && freeze_nconsec > freeze_max)
@@ -1654,6 +1780,7 @@ void FixQEqSam::qeq_solve_minres()
                            + ridge_cur);
         qb[i] = -(chi_b(i) + (ionfield_flag ? fixq_field[i] : 0.0) + q0field[i]);
         if (efield) qb[i] -= chi_field[i];
+        if (anh_q0shift && anh_rhs) qb[i] += anh_rhs[i];   // Picard q0 shift (apply_quartic_eta)
         qs[i] = seed0 ? (qa[i] - q0[type[i]]) : 0.0; }
     } else
 #endif
@@ -1662,6 +1789,7 @@ void FixQEqSam::qeq_solve_minres()
                          + ridge_cur);    // (unused by MINRES; kept consistent)
       qb[i] = -(chi_b(i) + (ionfield_flag ? fixq_field[i] : 0.0) + q0field[i]);   // + q0 reference-charge field (conservation)
       if (efield) qb[i] -= chi_field[i];                                        // external-field coupling (fix efield)
+      if (anh_q0shift && anh_rhs) qb[i] += anh_rhs[i];                          // Picard q0 shift (apply_quartic_eta)
       qs[i] = seed0 ? (qa[i] - q0[type[i]]) : 0.0; } }   // warm-start from the previous charges
     if (seed0) project_neutral(qs);                                  // keep the seed in the neutral subspace
     project_neutral(qb);
@@ -1821,12 +1949,14 @@ void FixQEqSam::qeq_solve()
 #pragma omp parallel for num_threads(nth) schedule(static)
         for (int ii=0; ii<nn; ii++){ int i=ilist[ii]; if(!(mask[i]&groupbit)) continue;
           Hdia_inv[i]=1.0/((solve_diag_of(i))+ridge_cur);   // match the ridged operator
-          qb[i]=-(chi_b(i)+(ionfield_flag?fixq_field[i]:0.0)+q0field[i]); }
+          qb[i]=-(chi_b(i)+(ionfield_flag?fixq_field[i]:0.0)+q0field[i]);
+          if (anh_q0shift && anh_rhs) qb[i] += anh_rhs[i]; }   // Picard q0 shift at the predictor's eta_eff
       } else
 #endif
       { for (int ii=0; ii<nn; ii++){ int i=ilist[ii]; if(!(mask[i]&groupbit)) continue;
         Hdia_inv[i]=1.0/((solve_diag_of(i))+ridge_cur);     // match the ridged operator
-        qb[i]=-(chi_b(i)+(ionfield_flag?fixq_field[i]:0.0)+q0field[i]); } }   // + q0 reference-charge field (conservation)
+        qb[i]=-(chi_b(i)+(ionfield_flag?fixq_field[i]:0.0)+q0field[i]);       // + q0 reference-charge field (conservation)
+        if (anh_q0shift && anh_rhs) qb[i] += anh_rhs[i]; } }   // Picard q0 shift (apply_quartic_eta at the predictor filled it)
       if (efield) {
 #if defined(_OPENMP)
         if (omp_go(nth, nn)) {
@@ -1862,13 +1992,13 @@ void FixQEqSam::qeq_solve()
       // predictor error whatever n_corr is -- so resid/b alone overstates the accuracy. Same preconditioned,
       // projected norm as qeq_cg; one extra matvec per 200 steps. Rank-uniform condition (qeq_matvec communicates).
       if (update->ntimestep == 0 || update->ntimestep % 200 == 0) {
-        qeq_matvec(qs, q_q);
+        lanczos_matvec(qs, q_q);   // the engaged solver's operator (device under devsolve); host = qeq_matvec
         for (int ii=0; ii<nn; ii++){ int i=ilist[ii]; if(mask[i]&groupbit) q_r[i]=qb[i]-q_q[i]; }
         apply_precond(q_r, q_d);
         project_neutral(q_d);
         const double cres = sqrt(fabs(qeq_dot(q_r, q_d)))/cg_bnorm;
         if (comm->me == 0)
-          utils::logmesg(lmp, "samqeq ASPC-DIAG step {}: resid/b corrector={:.2e} committed={:.2e} (omega={:.4g});"
+          utils::logmesg(lmp, "samqeq ASPC-DIAG step {}: resid/b corrector={:.2e} committed={:.2e} (omega={:.4g}); "
                               "accepted steps above tolerance {}/{}\n", update->ntimestep, rresid, cres, w,
                          aspc_nabove, aspc_naccept);
       }
@@ -1896,11 +2026,11 @@ void FixQEqSam::qeq_solve()
           if (++aspc_nabove_run >= 100 && !aspc_above_warned) {
             aspc_above_warned = 1;
             if (comm->me == 0)
-              error->warning(FLERR, "samqeq ASPC: the capped corrector (n_corr={}) has been above `tolerance` on 100"
-                                    "consecutive accepted steps (last resid/b {:.2e}): the committed charge keeps"
-                                    "(1-omega)={:.2f} of the predictor error whatever n_corr is, so this is a property of"
-                                    "the predictor (how smoothly q(t) moves), not of the"
-                                    "corrector. If Born-Oppenheimer accuracy is required use `aspc off` (~3.5x the"
+              error->warning(FLERR, "samqeq ASPC: the capped corrector (n_corr={}) has been above `tolerance` on 100 "
+                                    "consecutive accepted steps (last resid/b {:.2e}): the committed charge keeps "
+                                    "(1-omega)={:.2f} of the predictor error whatever n_corr is, so this is a property of "
+                                    "the predictor (how smoothly q(t) moves), not of the "
+                                    "corrector. If Born-Oppenheimer accuracy is required use `aspc off` (~3.5x the "
                                     "matvecs). Warned once.", aspc_ncorr, rresid, 1.0 - w);
           }
         } else aspc_nabove_run = 0;
@@ -1978,6 +2108,7 @@ void FixQEqSam::qeq_solve()
         Hdia_inv[i] = 1.0/((solve_diag_of(i)) + (ridge_local ? ridge_atom[i] : ridge_cur));
         qb[i] = -(chi_b(i) + (ionfield_flag ? fixq_field[i] : 0.0) + q0field[i]);
         if (efield) qb[i] -= chi_field[i];
+        if (anh_q0shift && anh_rhs) qb[i] += anh_rhs[i];   // Picard q0 shift (apply_quartic_eta)
         qs[i] = (seed0 && attempt==0) ? (qa[i] - q0[type[i]]) : 0.0; }
     } else
 #endif
@@ -1985,10 +2116,13 @@ void FixQEqSam::qeq_solve()
       Hdia_inv[i] = 1.0/((solve_diag_of(i)) + (ridge_local ? ridge_atom[i] : ridge_cur));
       qb[i] = -(chi_b(i) + (ionfield_flag ? fixq_field[i] : 0.0) + q0field[i]);   // + fixed-charge field + q0 reference field (conservation)
       if (efield) qb[i] -= chi_field[i];                                       // external-field coupling (fix efield)
+      if (anh_q0shift && anh_rhs) qb[i] += anh_rhs[i];                         // Picard q0 shift (apply_quartic_eta)
       qs[i] = (seed0 && attempt==0) ? (qa[i] - q0[type[i]]) : 0.0; } }  // warm-start (attempt 0)
     if (seed0 && attempt==0) project_neutral(qs);                  // keep the seed in the neutral subspace
+    cg_rhs_raw = sqrt(qeq_dot(qb, qb));                             // |b| BEFORE projection = the zero-RHS guard's scale (collective)
     project_neutral(qb);                                            // RHS into the per-molecule-neutral subspace
     { const double t0 = (th_on == 1) ? platform::walltime() : 0.0; it = qeq_cg(qb, qs); if (th_on == 1) th_cg += platform::walltime() - t0; }                                            // projected CG: Ã qs = P(−χ) − P·H·Δ_p
+    cg_rhs_raw = 0.0;                                               // the guard is armed for the main solve only
     double mq = 0.0;
 #if defined(_OPENMP)
     if (omp_go(nth, nn)) {
@@ -2096,7 +2230,7 @@ void FixQEqSam::qeq_solve()
     // diagnostic print: deck-unit energies /ev_scale so the "eV" labels stay TRUE eV in units real
     // (exact /1.0 in metal). max|q| is charge (e), unconverted.
     if (ridge_mode == 2)
-      error->warning(FLERR, "samqeq: Lanczos lambda_min={:.4g} eV at step {} -> ridge={:.4g} eV (max|q|={:.3f})"
+      error->warning(FLERR, "samqeq: Lanczos lambda_min={:.4g} eV at step {} -> ridge={:.4g} eV (max|q|={:.3f}) "
                             "[{} engaged solves so far]",
                      lmin_est/ev_scale, update->ntimestep, ridge_cur/ev_scale, maxq, nwarn_ridge);
     else if (ridge_mode == 3)
@@ -2104,7 +2238,7 @@ void FixQEqSam::qeq_solve()
                             "{:.3g} eV, max|q|={:.3f}) [{} engaged solves so far]", update->ntimestep, rmax/ev_scale,
                      maxq, nwarn_ridge);
     else
-      error->warning(FLERR, "samqeq: near-critical config at step {} bounded with adaptive ridge={:.3g} eV"
+      error->warning(FLERR, "samqeq: near-critical config at step {} bounded with adaptive ridge={:.3g} eV "
                             "(max|q|={:.3f}) [{} engaged solves so far]", update->ntimestep, ridge_cur/ev_scale, maxq,
                      nwarn_ridge);
   }
@@ -2113,6 +2247,8 @@ void FixQEqSam::qeq_solve()
       error->warning(FLERR, "samqeq: CG diverged (|q|>50) at step {} -> MINRES auto-fallback", update->ntimestep);
     double save_qcap = minres_qcap;                                // bound the trial states on the rescue solve
     if (minres_qcap <= 0.0) minres_qcap = 4.0;
+    ensure_host_H();                                               // the host MINRES multiplies the CSR H, which an engaged
+                                                                   //   device solve stops maintaining (no-op on host decks)
     qeq_solve_minres();                                            // re-solve this step (build_molinv valid;
     minres_qcap = save_qcap;                                       //   its own freeze guard applies if still bad)
     return;
@@ -2220,7 +2356,7 @@ void FixQEqSam::field_diag()
       double cA = 0.0;                                            // the exact per-atom coefficient, for comparison
       { std::vector<double> tmp(atom->nmax, 0.0); if (eksp->compute_self_peratom(tmp.data(), groupbit)) cA = tmp[A]; }
       const double xiA = eksp->self_image_term();
-      utils::logmesg(lmp, "SELFDIAG atomtag={} recip_self_A={:.6f} (homogeneous lr_self_meas={:.6f}, diff={:.6f} = {:.4f} eV/e;"
+      utils::logmesg(lmp, "SELFDIAG atomtag={} recip_self_A={:.6f} (homogeneous lr_self_meas={:.6f}, diff={:.6f} = {:.4f} eV/e; "
                           "exact c_A=K_A−ξ={:.6f} [K_A={:.6f}, ξ={:.6f}], probe−exact={:+.6f})\n",
                      (long)atom->tag[A], S_A, lr_self_meas, S_A - lr_self_meas,
                      (S_A - lr_self_meas)*force->qqrd2e/ev_scale, cA, cA + xiA, xiA, S_A - cA);   // /ev_scale keeps the eV/e label true in units real
@@ -2242,7 +2378,7 @@ void FixQEqSam::compute_self_peratom_now()
   }
   for (int i = 0; i < atom->nmax; i++) lr_self_atom[i] = 0.0;
   if (!eksp->compute_self_peratom(lr_self_atom, groupbit))
-    error->all(FLERR, "samqeq: fix_modify recip_self peratom needs kspace_style pppm/samqeq (the Kokkos backend"
+    error->all(FLERR, "samqeq: fix_modify recip_self peratom needs kspace_style pppm/samqeq (the Kokkos backend "
                       "does not implement compute_self_peratom)");
   for (int ii = 0; ii < nn; ii++) { int i = ilist[ii]; if (!(atom->mask[i] & groupbit)) continue;
     if (!std::isfinite(lr_self_atom[i]))
@@ -2258,8 +2394,8 @@ void FixQEqSam::compute_self_peratom_now()
     if (comm->me == 0 && cnt > 0) {
       const double f = force->qqrd2e/ev_scale, mean = sum/(double)cnt;
       const double xi = eksp->self_image_term();
-      utils::logmesg(lmp, "samqeq: exact per-atom grid self-coefficient at step {}: mean {:.5f}, min {:.5f}, max {:.5f} raw"
-                          "(= {:.4f} eV/e mean, spread {:.4f} eV/e) over {} atoms = K_ii − ξ with image term ξ = {:.5f} raw"
+      utils::logmesg(lmp, "samqeq: exact per-atom grid self-coefficient at step {}: mean {:.5f}, min {:.5f}, max {:.5f} raw "
+                          "(= {:.4f} eV/e mean, spread {:.4f} eV/e) over {} atoms = K_ii − ξ with image term ξ = {:.5f} raw "
                           "({:.4f} eV/e; the diagonal keeps η+ξ, as the Ewald energy does); refreshed every solve, no calibration\n",
                      update->ntimestep, mean, g[0], -g[1], mean*f, (-g[1]-g[0])*f, cnt, xi, xi*f);
     }

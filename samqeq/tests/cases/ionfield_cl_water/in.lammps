@@ -28,7 +28,13 @@ pair_coeff      1 3 lj/cut 0.0 1.0
 pair_coeff      2 3 lj/cut 0.0 1.0
 pair_coeff      3 3 lj/cut 0.0 1.0
 pair_coeff      * * coul/long
-pair_coeff      * * coul/shield/intra 1.11
+# coul/shield/intra: one line per type pair, gamma_ij = sqrt(gamma_i*gamma_j) from spcfq_cl.param col 4 (= the solve)
+pair_coeff      1 1 coul/shield/intra 1.11
+pair_coeff      1 2 coul/shield/intra 1.11
+pair_coeff      1 3 coul/shield/intra 1.33266649991661
+pair_coeff      2 2 coul/shield/intra 1.11
+pair_coeff      2 3 coul/shield/intra 1.33266649991661
+pair_coeff      3 3 coul/shield/intra 1.6
 kspace_style    pppm/samqeq 1.0e-6
 neighbor        2.0 bin
 compute         dip fq dipole/samqeq

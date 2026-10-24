@@ -153,7 +153,7 @@ matrix-vector product. The solve is a projected conjugate gradient in the per-fr
 
 | `lr_ewald` | route |
 |---|---|
-| `0` | short-range (tapered) or, with `lr_alpha > 0`, damped-shifted force |
+| `0` | short-range (tapered) or, with `lr_alpha > 0`, damped-shifted force; no kspace style (a deck that defines one is refused, because its `pe` is an Ewald energy this route's charges do not minimize) |
 | `1` | intramolecular shielding only; intermolecular pairs are bare `1/r` |
 | `2` | all pairs shielded, `J(r) → 1/r` at long range; stable, energy-conserving NVE |
 
@@ -170,16 +170,22 @@ Force consistency uses `coul/shield/intra` overlaid on `coul/long`:
 ```lammps
 pair_style hybrid/overlay lj/cut 10.0 coul/long 10.0 coul/shield/intra 5.0 all
 pair_coeff * * coul/long
-pair_coeff * * coul/shield/intra <gamma>
+pair_coeff 1 1 coul/shield/intra <gamma_1>
+pair_coeff 1 2 coul/shield/intra <sqrt(gamma_1*gamma_2)>
+pair_coeff 2 2 coul/shield/intra <gamma_2>
 kspace_style pppm/samqeq 1.0e-6
 ```
 
 The pair scope (`intra` or `all`) must match `lr_ewald` (`intra` for 1, `all` for 2); the fix checks this at
 initialization and refuses a mismatch, because the charges are identical either way and only the forces move.
-Under `hybrid/overlay`, give the `coul/shield/intra` coefficients as `pair_coeff * *` or one line per type
-pair: LAMMPS does not mix a sub-style across type pairs that another sub-style (here `coul/long`) already
-covers, so per-type lines alone leave the cross pairs out of the forces. The fix refuses such a deck and
-names the missing pairs.
+Under `hybrid/overlay`, give the `coul/shield/intra` coefficients one line per type pair: LAMMPS does not mix a
+sub-style across type pairs that another sub-style (here `coul/long`) already covers, so per-type lines alone
+leave the cross pairs with bare Coulomb in the forces while the solve shields them. For the `cbrt` kernel the
+cross value is `sqrt(gamma_i*gamma_j)` from the parameter file's fourth column; a single `pair_coeff * *` value
+is right only when every type carries the same value. The fix checks every type pair from the type tables at
+initialization (the verdict does not depend on the rank count): an unassigned pair is refused at `lr_ewald` 2
+and warned at `lr_ewald` 1, and a `cbrt` pair value that differs from `sqrt(gamma_i*gamma_j)` by more than the
+`shieldcheck` tolerance, or a `gaussian`/`slater` per-type value that differs from the fourth column, is refused. The check covers every type with a positive fourth column in the parameter file, inside the fix group or not, including neutral spectator types: give every such type pair a `coul/shield/intra` line, or drop types the solve never sees from the parameter file.
 The fix takes the Ewald split from the kspace style, so `kspace_modify gewald` is optional.
 
 ## Shielding kernels
@@ -220,18 +226,19 @@ indefinite once η falls below the contact value of its own kernel (about 3.5 eV
 | `energy yes` | Count the on-site self-energy `Σ(χ_i q_i + ½ η_i q_i²)` in the potential energy (force-free). |
 | `eselfref qs` \| `q` | Basis of the reported self-energy (reporting only). |
 | `xl <q_mass> <q_tdamp>` [`<T_q>`] [`<seed>`] [`masswt`] | Extended-Lagrangian charge dynamics (velocity-Verlet charges, `lr_ewald > 0`). On the same benchmark in NVE the nuclear temperature falls from 320 to 69 K in 10 ps; use it under a thermostat. `T_q` adds a fluctuation–dissipation-balanced Langevin charge thermostat; `masswt` sets `m_i = m0·eta[type]` for a uniform fictitious frequency. |
-| `aspc <n_corr>` [`order`] \| `rtol <v>` \| `off` | Always-stable predictor–corrector (`lr_ewald 2`). A corrected step is accepted only if it is bounded and its relative residual is below `rtol` (default 0.01); otherwise the step falls back to the exact solve. The acceptance test does not bound energy conservation: on the 64-molecule water benchmark in NVE, `aspc 2` needs 2 matvecs per step against 18 for the exact solve, accepts every step at residuals near 5×10⁻⁴, and cools the system by about 1200 K/ns. Use it under a thermostat. |
+| `aspc <n_corr>` [`order`] \| `rtol <v>` \| `off` | Always-stable predictor–corrector (`lr_ewald 2`); `order` is the predictor order k = 1, 2 (default) or 3, and other values are refused. A corrected step is accepted only if it is bounded and its relative residual is below `rtol` (default 0.01); otherwise the step falls back to the exact solve. The acceptance test does not bound energy conservation: on the 64-molecule water benchmark in NVE, `aspc 2` needs 2 matvecs per step against 18 for the exact solve, accepts every step at residuals near 5×10⁻⁴, and cools the system by about 1100 K/ns. Use it under a thermostat. |
 | `spikeguard <q_spike> <k_spike>` \| `off` | Soft restoring force on any charge above `q_spike` under XL (default on; inactive in normal dynamics). |
 | `ridge eig <floor>` [`<m>`] [`<every>`] [`<delta>`] | Near-critical regularizer: an `m`-step Lanczos estimate of the smallest eigenvalue sets a Tikhonov ridge so that `λ_min + ridge ≥ floor`. The Lanczos value is an upper bound, so use `m ≥ 60` on interface cells; `<delta>` budgets the estimate error. Other modes: `ridge <q_onset> <gain>`, `ridge local ...`, `ridge off`. |
 | `rnd off` \| `<qfreeze>` [`<maxconsec>`] | Freeze charges above `qfreeze` for at most `maxconsec` steps instead of aborting a near-critical solve. |
 | `precond ilu` [`drop_tol`] \| `diag` | Preconditioner for the ACKS2 saddle: diagonal (default) or a centralized block-ILUT for the near-singular metallic limit. |
+| `saddlestop <f>` | The saddle BiCGStab (host and device) stops when the relative residual falls below `f`×tolerance (default 0.01; `f` in (0,1]) and certifies that exit against the true residual `b − Ax`, restarting the recurrence from it (at most three times) when it is above the stop. The tolerance bounds the residual, not the charges: on the saddle BiCGStab's charge error per unit residual is 10–200×, so the default stop costs about two extra matvecs per solve for charges converged to the stated tolerance. Convergence counts and warnings still use the tolerance itself; `SOLVER-DIAG` reports `nonconv=` (uncapped solves returned above it), `rr=` (residual replacements) and `rec=` (the recurrence residual at the last converged exit). MINRES stops on `‖r‖/‖b‖` and is unaffected. |
 | `bondsoft off` \| `<kappa> <bcut>` | Standard ACKS2 bond softness. Arming it selects MINRES and the Gaussian taper-cutoff operator. |
 | `recip_self peratom` \| `auto` \| `<raw>` | Grid self-term subtracted from the diagonal. `peratom`: the exact per-atom value from `pppm/samqeq` (recommended where the mesh allows, at least 9 points per direction at order 5; not on Kokkos). `auto` (default): a scalar calibrated by deterministic probes. `<raw>`: pin the scalar, in the kspace style's internal units (1/Å; multiply by the Coulomb constant for eV/e²). A pin belongs to one Ewald split; the fix warns when it departs by more than 2% from the converged-mesh limit `2 g_ewald/√π` of the current split. |
 | `recip_probes <K>` | Number of deterministic probe pairs for the grid self-term calibration (default 16). The calibration is repeated only when the grid changes, and a jump at an unchanged grid is refused. |
-| `devsolve on` \| `off` | Kokkos only: run the solve on the device (default off). |
+| `devsolve on` \| `off` | Kokkos only: run the solve on the device (default off). The device CG stops on the same criterion as the host CG, publishes the same residual (read by the ASPC acceptance test) and prints the same `SOLVER-DIAG` line. The quartic, the per-atom ridge and `solver minres` run on the host; the Lanczos estimate of `ridge eig` uses the device operator, and a host solve on a device-solve step rebuilds the host matrix first. |
 | `solver cg` \| `minres [<qcap>]` \| `cg nofallback` | Krylov solver (default `cg`, with automatic MINRES fallback on divergence; `nofallback` disables it). `<qcap>` enables the stall-gated charge truncation of MINRES. |
 | `solver warmstart on` \| `off` | Seed the solve from the previously converged charges (default off). |
-| `shieldcheck <tol>` \| `on` \| `off` | Initialization checks that the pair style and the fix use the same kernel, parameters, cutoff range, scope and type-pair coverage. `<tol>` is the range tolerance in eV per unit charge pair (default 0.02). `off` disables every check and warns. |
+| `shieldcheck <tol>` \| `on` \| `off` | Initialization checks that the pair style and the fix use the same kernel, parameters, cutoff range, scope, type-pair assignment and per-type-pair kernel parameter. `<tol>` is the tolerance of the range and `cbrt` pair-parameter checks in eV per unit charge pair (default 0.02). `off` disables every check and warns. |
 | `ionfield on` \| `off` | Fixed charges outside the fix group enter the solve through their field (`on`). A deck with such charges must say which it intends; `off` acknowledges an ion-blind solve. |
 | `quartic <group> <c4>` [`<c>`] [`<niter>`] [`<mix>`] [`<fld0>`] [`<qref>`] | Quartic on-site wall `c4 q⁴` on the group (with `qref > 0`, on `|q| − qref` only), solved by damped Picard iteration (`niter` passes, mixing `mix`). It acts on the charges only and adds no force term, so dynamics under it do not conserve energy. |
 | `shield ...`, `iondamp ...`, `shieldpair ...`, `gself ...` | See the sections above. |
@@ -304,9 +311,9 @@ MPI rank, four threads give 1.23×; two MPI ranks give 1.80×, so MPI ranks rema
 
 ## Version and citation
 
-This is samQEq 1.0.1, archived at Zenodo, https://doi.org/10.5281/zenodo.23051745. If you use it, please cite
-that record and the accompanying paper: N. Solan, D. Sun and T. A. Pascal, "samQEq: unified charge equilibration
-from molecules to conductors", Computer Physics Communications (submitted).
+This is samQEq 1.0.2, archived at Zenodo, https://doi.org/10.5281/zenodo.23051745. If you use it, please cite
+that record and the accompanying paper: N. Solan, D. Sun and T. A. Pascal, "samQEq: universal charge equilibration
+for molecules and conductors", Computer Physics Communications (submitted).
 
 ## License
 

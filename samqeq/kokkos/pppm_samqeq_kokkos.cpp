@@ -75,8 +75,33 @@ void PPPMSamqeqKokkos<DeviceType>::init()
   // reject explicitly rather than run silently wrong.
   if (this->slabflag)
     this->error->all(FLERR,
-                     "pppm/samqeq/kk does not support kspace_modify slab; use the host pppm/samqeq"
+                     "pppm/samqeq/kk does not support kspace_modify slab; use the host pppm/samqeq "
                      "(EW3DC supported there)");
+}
+
+/* ----------------------------------------------------------------------
+   device mirror of PPPMSamqeq::resize_mesh_from_charges (pppm_samqeq.cpp). PPPMKokkos inherits the stock
+   PPPM::set_grid_global and the base KSpace::qsum_qsq, which reads the HOST atom->q (synced first).
+------------------------------------------------------------------------- */
+
+template<class DeviceType>
+bool PPPMSamqeqKokkos<DeviceType>::resize_mesh_from_charges(int *od, int *nd)
+{
+  if (this->gridflag) return false;
+  od[0] = this->nx_pppm; od[1] = this->ny_pppm; od[2] = this->nz_pppm;
+  ((AtomKokkos *) this->atom)->sync(Host, Q_MASK);
+  this->qsum_qsq(0);
+  this->h_x = this->domain->xprd/this->nx_pppm; this->h_y = this->domain->yprd/this->ny_pppm;
+  this->h_z = this->domain->zprd*this->slab_volfactor/this->nz_pppm;
+  if (this->compute_df_kspace() <= this->accuracy) return false;
+  struct HoldGewald { int &f; int s; ~HoldGewald() { f = s; } } hold{this->gewaldflag, this->gewaldflag};
+  this->gewaldflag = 1;
+  this->set_grid_global();
+  nd[0] = this->nx_pppm; nd[1] = this->ny_pppm; nd[2] = this->nz_pppm;
+  const bool finer = (bigint) nd[0]*nd[1]*nd[2] > (bigint) od[0]*od[1]*od[2];
+  this->nx_pppm = od[0]; this->ny_pppm = od[1]; this->nz_pppm = od[2];
+  if (finer) init();
+  return finer;
 }
 
 /* ----------------------------------------------------------------------
@@ -103,6 +128,18 @@ void PPPMSamqeqKokkos<DeviceType>::compute(int eflag, int vflag)
   atomKK->sync(Host, Q_MASK);                        // qsum_qsq() reads atom->q on the host directly
   this->qsum_qsq(0);                                 // re-measure qsum/qsqsum from the current (solved) charges
   PPPMKokkos<DeviceType>::compute(eflag, vflag);      // stock device reciprocal solve, with the fresh qsqsum
+  // Operator self term, as PPPMSamqeq::compute (host q is synced above). Global energy only: the per-atom energy
+  // lives on the device here and is NOT corrected -- warned once.
+  if (this->eflag_global || this->eflag_atom) {
+    atomKK->sync(Host, MASK_MASK);
+    const double de = this->operator_self_delta(this->atom, this->world, this->g_ewald, this->qscale, nullptr);
+    if (this->eflag_global) this->energy += de;
+    if (this->eflag_atom && this->op_self_grpbit && !op_self_eatom_warned && this->comm->me == 0) {
+      op_self_eatom_warned = 1;
+      this->error->warning(FLERR, "pppm/samqeq/kk: per-atom energy lacks the operator self-term correction "
+                                  "(global pe includes it)");
+    }
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -339,7 +376,7 @@ void PPPMSamqeqKokkos<DeviceType>::compute_vector_device(typename AT::t_kkfloat_
                                          0, (int) this->d_u_brick.extent(2));
     const double s_psi  = sam_sum_abs_kk(d_psi, this->nlocal);
     utils::logmesg(this->lmp,
-                   "KKSP_DIAG call={} step={} mapped={} grid={}x{}x{} out=[{},{}]x[{},{}]x[{},{}]"
+                   "KKSP_DIAG call={} step={} mapped={} grid={}x{}x{} out=[{},{}]x[{},{}]x[{},{}] "
                    "ubrick_ext={}x{}x{} | rho_fft={:.10e} u_in={:.10e} u_ghost={:.10e} psi={:.10e}\n",
                    ++sam_diag_call, (long) this->update->ntimestep, mapped_this_call,
                    this->nx_pppm, this->ny_pppm, this->nz_pppm,

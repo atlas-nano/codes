@@ -81,6 +81,7 @@ class PPPMSamqeq : public PPPM, public SamqeqKspace {
   // signature {nx,ny,nz,g_ewald,box} changes (one backward FFT); per atom ~ (2P-1)^3 flops.
   bool compute_self_peratom(double *out, int grpbit) override;
   double self_image_term() const override { return self_xi; }
+  bool resize_mesh_from_charges(int *od, int *nd) override;   // see samqeq_kspace.h
 
  protected:
   FFT_SCALAR ***electrolyte_density_brick;    // source-group density on the 3d brick grid

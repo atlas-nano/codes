@@ -52,7 +52,12 @@ void FixQEqSam::xl_chargeforce()
   double *qa = atom->q;
   for (int i=0;i<atom->nmax;i++) qs[i]=0.0;
   for (int ii=0;ii<nn;ii++){ int i=ilist[ii]; if(mask[i]&groupbit) qs[i]=qa[i]-q0[type[i]]; }
-  qeq_matvec(qs, q_q);                            // q_q = P(H·qs) (η qs + full Coulomb qs, projected)
+  // BARE diagonal here: apply_quartic_eta (final_integrate) puts the secant (dE_anh/dq)/q on eta_diag, which
+  // solve_diag_of adds under lr_quartic, so P(H·qs) would carry ~+dE_anh/dq and anh_force_add below adds it again.
+  // With the bare diagonal g = chi + H0·qs + dE_anh/dq, the exact BO gradient.
+  xl_bare_diag = 1;
+  qeq_matvec(qs, q_q);                            // q_q = P(H0·qs) (bare η qs + full Coulomb qs, projected)
+  xl_bare_diag = 0;
   // 1/(fictitious charge mass). Scalar (default): inv = 1/q_mass -> byte-identical. Mass-weighted (xl_masswt):
   // per-atom m_i = q_mass·eta_eff_i, so every mode has ONE frequency ω0=√(eta_eff/(q_mass·eta_eff))=√(1/q_mass)
   // -- constant for all q, chosen above the nuclear band (the Car-Parrinello cure for a wide/anharmonic eta
@@ -132,7 +137,11 @@ void FixQEqSam::final_integrate()
   if (atom->nlocal > n_cap*0.90 || m_fill > m_cap*0.90) reallocate_matrix();   // XL under NPT: density rises ->
                                               // neighbor count grows -> H CSR must grow too, else compute_H
                                               // overflows m_cap -> qeq_matvec reads bad indices -> segfault.
-  if (!lr_calibrated || grid_changed()) calibrate_recip_self();   // (re)measure recip_self iff the PPPM grid changed
+  // The SAME guard as the BO path (pre_force): a deck-pinned recip_self is never re-measured (a pin records no grid
+  // signature, so grid_changed() would report a change on the first XL step and replace it), and under
+  // `recip_self peratom` the per-atom self array the matvec reads is refreshed every XL step.
+  if (lr_self_peratom) { if (!lr_nrecip) compute_self_peratom_now(); }
+  else if (!lr_nrecip && !lr_self_pinned && (!lr_calibrated || grid_changed())) calibrate_recip_self();
   build_molinv();
   compute_H();                                    // erfc real-space at the current positions (q0field needs H built)
   // ★ XL FORCE CONSISTENCY (q0): the charge force must be the NEGATIVE BO GRADIENT, so pchi must carry the
@@ -156,9 +165,9 @@ void FixQEqSam::final_integrate()
     pchi[i]=chi_b(i) + (ionfield_flag?fixq_field[i]:0.0) + q0field[i] + (efield?chi_field[i]:0.0); }
   project_neutral(pchi);                          // cache P(chi + fixq_field + q0field [+ chi_field]) for the charge force
   if (lr_quartic) apply_quartic_eta();   // fill eta_diag[i] = eta0[type] + anharmonic secant (lagged q)
-  // (chemical seed; solve_diag_of re-adds the gself delta for the FORCE matvec. The mass weight
-  // and shadow preconditioner reads of raw eta_diag below therefore omit E_self under XL+quartic+gself -- a
-  // conditioning choice only; XL+gself is not a validated combination.)
+  // (chemical seed. The FORCE matvec uses the bare gself-folded eta[t] (xl_bare_diag) and adds the anharmonic
+  // gradient once through anh_force_add. The mass weight's read of raw eta_diag below therefore omits E_self under
+  // XL+quartic+gself -- a conditioning choice only; XL+gself is not a validated combination.)
   // The field gate quartic_gate is otherwise only recomputed in BO pre_force -> it would stay at its cold-start
   // allocation value (1.0) for the life of an XL run. compute_quartic_gate() is a no-op
   // (gate≡1, byte-identical) when fld0<=0 or no q0 reference, so only pay its one-FFT PPPM compute_vector cost

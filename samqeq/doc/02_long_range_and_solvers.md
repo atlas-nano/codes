@@ -26,6 +26,21 @@ Other exclusions are allowed; fix gcmc/widom/charge-regulation rely on an intern
 header's **first** field is `gamma_align`, which no solve path uses (it must be positive); `gewald` does not appear in the param
 file at all. Setting `kspace_modify gewald` explicitly is legal and pins the split, but nothing has to match.
 
+**The mesh follows the solved charges.** PPPM sizes its mesh at `run` start from the charges present then, and its
+error estimate grows with `Σq²`; a run that starts from zero or under-polarized charges would keep a mesh too coarse
+for the charges the setup solve produces. After that solve, `pppm/samqeq` checks the current mesh against the kspace
+accuracy for the solved charges at the same `g_ewald`; if it falls short, the mesh is refined, the start charges and
+solver histories are restored, and the setup solve is repeated. The log names the new mesh and `g_ewald` as a
+`kspace_modify mesh … gewald …` line: pin both to compare energies across runs or restarts. A mesh pinned with
+`kspace_modify mesh` is never changed.
+
+**Every `g_ewald` change recalibrates the grid self-term** (on the default deterministic-probe route), because the
+self-term enters both the solve's diagonal and the reported energy. The reported `pe` uses that same calibrated
+self-term in place of the analytic `2g/√π`, so `pe` is the energy the solve minimizes; `pppm/samqeq` logs the
+difference once per run. A run-boundary setup that skips the solve uses the last calibrated value; with no calibrated
+value (or under `recip_self peratom`) it warns once that `pe` there uses the analytic term. Each calibration logs
+`samqeq: recip_self_full <c> step <n>` at full precision for pinning a balance deck with `fix_modify <id> recip_self <c>`.
+
 **`lr_ewald` is the SIXTH field of the param header, and the deck has to be made consistent with it.** It is not
 inferred from the deck, and it is not inferred from the kspace setup. This is the single most expensive mistake
 you can make here, because it is silent: with `lr_ewald=2` and a `coul/shield/intra` cutoff that omits `all`,
@@ -69,7 +84,7 @@ Mirror the same choice on the pair style so force and solve stay consistent:
 The pair style owns the **forces/energy**; the fix owns the **charge solve**. They select the shielding kernel
 independently, so a deck can silently integrate forces from one kernel while equilibrating charges against
 another, with no error, no warning and plausible-looking output (a thermostat-off molten-salt NVE with
-mismatched kernels reaches 12,400 K in 4.5 ps). `FixQEqSam::init()` asserts four things
+mismatched kernels reaches 12,400 K in 4.5 ps). `FixQEqSam::init()` asserts the following
 and errors at startup if they disagree:
 
 | channel | pair side | fix side |
@@ -78,6 +93,20 @@ and errors at startup if they disagree:
 | PQEq λ | `lambda <val>` | `fix_modify <id> shield gaussian <lambda>` |
 | Slater 2s flags | `2s <type>...` | `fix_modify <id> shield slater 2s <type>...` |
 | range | `<cut>` | the fix's `swb` |
+| scope | `intra` or `all` | `lr_ewald` 1 or 2 (param-file header) |
+| type-pair assignment | a `coul/shield/intra` `pair_coeff` for every type pair | every type pair in the param file |
+| kernel parameter | `pair_coeff i j coul/shield/intra <value>` | `sqrt(gamma_i*gamma_j)` (cbrt); per-type col 4 (gaussian/slater) |
+
+**Assignment and kernel parameter.** Both are checked from the type tables, so the verdict is the same at any
+rank count. Under `pair_style hybrid/overlay` LAMMPS does not mix a sub-style across type pairs that another
+sub-style already covers (`pair_coeff * * coul/long`), so a type pair with no `coul/shield/intra` line of its own
+carries bare Coulomb in the forces while the solve shields it. The fix refuses that at `lr_ewald` 2 (UNSET) and
+warns at `lr_ewald` 1, where a type pair that never shares a molecule is bare on both sides. For `cbrt` the solve
+uses `sqrt(gamma_i*gamma_j)` for every pair; a pair value that differs from it by more than the `shieldcheck`
+tolerance (in eV per unit charge pair, measured at `r = 0` where the kernels differ most) is refused (GAMMA). A
+single `pair_coeff * * coul/shield/intra <gamma>` is therefore right only when every type has the same gamma;
+otherwise give one line per type pair. For `gaussian` and `slater` the pair's per-type diagonal (`Rc` or zeta)
+must equal the fourth column to 1e-4 relative (DIAG). The check covers every type with a positive fourth column in the parameter file, inside the fix group or not, including neutral spectator types: give every such type pair a `coul/shield/intra` line, or drop types the solve never sees from the parameter file.
 
 **The range channel is a magnitude test, not `cut == swb`.** A cutoff difference only matters to the extent
 the correction `J(r) − 1/r` is still nonzero where one side stops applying it, and that depends entirely on the
@@ -250,6 +279,12 @@ The gas path (`lr_ewald 0`) always solves at a boundary.
 
 The solve prints `samqeq SOLVER-DIAG step N: CG <k> iters ...` every 200 steps (tagged `[warm]` when warm-start is
 on) — watch the iteration count to see the solver cost and confirm warm-start is helping.
+
+The saddle path (`lr_ewald 0` and `bondsoft`) prints `samqeq SOLVER-DIAG step N: saddle-BiCGStab <k> matvecs,
+resid/b=…, nonconv=…, rr=… rec=…` (`saddle-MINRES` without the `rr`/`rec` tail). `resid/b` is the true relative
+residual of the returned charges; `nonconv` counts uncapped solves returned above the tolerance; `rr` counts residual
+replacements and `rec` is the recurrence residual at the last converged exit. BiCGStab stops at `saddlestop`×tolerance
+(default 0.01), because its charge error per unit residual on the saddle is 10–200×.
 
 ## Next
 

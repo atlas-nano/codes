@@ -395,7 +395,7 @@ void FixQEqBaseSam::init()
     // is handled in the ctor: ev_scale errors on anything but metal/real.)
 
     if (efield->varflag == FixEfield::ATOM && efield->pstyle != FixEfield::ATOM)
-      error->all(FLERR, Error::NOLASTLINE, "Atom-style external electric field requires atom-style"
+      error->all(FLERR, Error::NOLASTLINE, "Atom-style external electric field requires atom-style "
                  "potential variable when used with fix {}", style);
     // PERIODIC-DIRECTION GUARD. Only a CONSTANT field component along a periodic axis is ill-defined: its potential -E.x is not
     // periodic, so get_chi_field's unmapped coordinate makes the RHS depend on image flags. An
@@ -412,14 +412,14 @@ void FixQEqBaseSam::init()
       if (((efield->xstyle != FixEfield::CONSTANT) && domain->xperiodic) ||
            ((efield->ystyle != FixEfield::CONSTANT) && domain->yperiodic) ||
            ((efield->zstyle != FixEfield::CONSTANT) && domain->zperiodic))
-        error->all(FLERR, Error::NOLASTLINE, "Must not have electric field component in direction of periodic"
-                         "boundary when using charge equilibration with samQEq (use an atom-style"
+        error->all(FLERR, Error::NOLASTLINE, "Must not have electric field component in direction of periodic "
+                         "boundary when using charge equilibration with samQEq (use an atom-style "
                          "potential variable for a periodic sawtooth field).");
       if (((fabs(efield->ex) > SMALL) && domain->xperiodic) ||
            ((fabs(efield->ey) > SMALL) && domain->yperiodic) ||
            ((fabs(efield->ez) > SMALL) && domain->zperiodic))
-        error->all(FLERR, Error::NOLASTLINE, "Must not have electric field component in direction of periodic"
-                         "boundary when using charge equilibration with samQEq (use an atom-style"
+        error->all(FLERR, Error::NOLASTLINE, "Must not have electric field component in direction of periodic "
+                         "boundary when using charge equilibration with samQEq (use an atom-style "
                          "potential variable for a periodic sawtooth field).");
     }
   }
@@ -574,7 +574,7 @@ void FixQEqBaseSam::aspc_setup()
   if (k == 1)      { double b[] = { 2.5, -2.0, 0.5 };                              for (int j=0;j<3;j++) aspc_B[j]=b[j]; }
   else if (k == 2) { double b[] = { 2.8, -2.8, 1.2, -0.2 };                        for (int j=0;j<4;j++) aspc_B[j]=b[j]; }
   else if (k == 3) { double b[] = { 3.0, -24.0/7, 27.0/14, -4.0/7, 1.0/14 };       for (int j=0;j<5;j++) aspc_B[j]=b[j]; }
-  else             { aspc_korder = 2; aspc_setup(); return; }   // default/clamp to k=2
+  else error->all(FLERR, "samqeq ASPC: predictor order k={} has no coefficients (1..3 only)", k);
   aspc_have = 0; aspc_build = -1;
   ngroup_fq = group->count(igroup);
 }

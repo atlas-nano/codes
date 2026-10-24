@@ -98,11 +98,11 @@ int FixQEqSam::modify_param(int narg, char **arg)
     if (comm->me == 0) {
       const char *mw = xl_masswt ? " [MASS-WEIGHTED: per-atom mass m0*eta[type], m0=q_mass, uniform charge freq]" : "";
       if (xl_Tq > 0.0)
-        utils::logmesg(lmp, "samqeq: extended-Lagrangian charge dynamics ON (q_mass={:.4g} eV ps^2/e^2,"
+        utils::logmesg(lmp, "samqeq: extended-Lagrangian charge dynamics ON (q_mass={:.4g} eV ps^2/e^2, "
                             "q_tdamp={:.4g} ps); FD-balanced Langevin charge thermostat T_q={:.4g} K (noise projected per-molecule){}\n",
                             q_mass, q_tdamp, xl_Tq, mw);
       else
-        utils::logmesg(lmp, "samqeq: extended-Lagrangian charge dynamics ON (q_mass={:.4g} eV ps^2/e^2,"
+        utils::logmesg(lmp, "samqeq: extended-Lagrangian charge dynamics ON (q_mass={:.4g} eV ps^2/e^2, "
                             "q_tdamp={:.4g} ps); pure friction (T_q=0); charges propagate by velocity-Verlet (no per-step solve){}\n",
                             q_mass, q_tdamp, mw);
     }
@@ -119,8 +119,8 @@ int FixQEqSam::modify_param(int narg, char **arg)
       if (comm->me == 0)
         utils::logmesg(lmp, "samqeq: ASPC on the ACKS2 saddle = {}{}\n",
                        aspc_saddle_allow ? "ALLOWED" : "REFUSED (default)",
-                       aspc_saddle_allow ? " -- behind the accept/reject gate. On the saddle ASPC costs"
-                                           "far more in charge conservation and CT accuracy than it saves in"
+                       aspc_saddle_allow ? " -- behind the accept/reject gate. On the saddle ASPC costs "
+                                           "far more in charge conservation and CT accuracy than it saves in "
                                            "wall-clock. You almost certainly want `aspc off`."
                                          : "; a deck that asks for ASPC there runs exact Born-Oppenheimer instead");
       return 3;
@@ -137,11 +137,13 @@ int FixQEqSam::modify_param(int narg, char **arg)
     aspc_ncorr = utils::inumeric(FLERR, arg[1], false, lmp);
     if (narg > 2) aspc_korder = utils::inumeric(FLERR, arg[2], false, lmp);
     if (aspc_ncorr < 1) error->all(FLERR, "fix_modify aspc: n_corr must be >= 1");
-    if (aspc_korder < 1 || aspc_korder > 4) error->all(FLERR, "fix_modify aspc: order must be 1..4");
+    // only k = 1..3 have Kolafa coefficients (aspc_setup)
+    if (aspc_korder < 1 || aspc_korder > 3)
+      error->all(FLERR, "fix_modify aspc: order k must be 1, 2 or 3 (got {}); k >= 4 has no Kolafa coefficients here", aspc_korder);
     aspc_setup();
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: ASPC q-direct predictor-corrector ON (order k={}, n_corr={}, omega={:.4g},"
-                          "rtol={:.3g}); fixed-iteration corrector off a time-reversible predictor, accept only if"
+      utils::logmesg(lmp, "samqeq: ASPC q-direct predictor-corrector ON (order k={}, n_corr={}, omega={:.4g}, "
+                          "rtol={:.3g}); fixed-iteration corrector off a time-reversible predictor, accept only if "
                           "rel-resid<rtol else BO (BO<->XL middle ground)\n",
                           aspc_korder, aspc_ncorr, aspc_omega, aspc_rtol);
     return (narg > 2) ? 3 : 2;
@@ -152,8 +154,8 @@ int FixQEqSam::modify_param(int narg, char **arg)
     else if (strcmp(arg[1], "q") == 0) eself_qs = 0;
     else error->all(FLERR, "fix_modify eselfref: unknown basis {} (use qs|q)", arg[1]);
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: on-site self-energy reporting basis = {} (reporting-only, no forces;"
-                          "qs basis makes the monitored etotal the solve's conserved functional for"
+      utils::logmesg(lmp, "samqeq: on-site self-energy reporting basis = {} (reporting-only, no forces; "
+                          "qs basis makes the monitored etotal the solve's conserved functional for "
                           "q0!=0 models)\n", eself_qs ? "qs = q - q0" : "q (physical charge)");
     return 2;
   }
@@ -179,7 +181,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
     else if (strcmp(arg[1], "mol") == 0) {   // molecular block-Jacobi (q-direct CG)
       precond_mode = 2;
       if (lr_ewald < 2)
-        error->all(FLERR, "fix_modify precond mol needs the Ewald-split operator (lr_ewald>=2); the"
+        error->all(FLERR, "fix_modify precond mol needs the Ewald-split operator (lr_ewald>=2); the "
                           "block is built from the same J_shield - erf(ar)/r the solve uses");
     }
     else error->all(FLERR, "fix_modify precond: unknown mode {} (use ilu|diag|mol)", arg[1]);
@@ -190,6 +192,15 @@ int FixQEqSam::modify_param(int narg, char **arg)
                           ilu_droptol);
     return (precond_mode == 1 && narg > 2) ? 3 : 2;
   }
+  if (strcmp(arg[0], "saddlestop") == 0) {   // fix_modify ID saddlestop <f>: saddle BiCGStab stops at f*tolerance
+    if (narg < 2) error->all(FLERR, "Illegal fix_modify saddlestop: use a factor in (0,1] (default 0.01)");
+    const double f = utils::numeric(FLERR, arg[1], false, lmp);
+    if (!(f > 0.0 && f <= 1.0)) error->all(FLERR, "fix_modify saddlestop: factor must be in (0,1], got {}", f);
+    acks2_stopscale = f;
+    if (comm->me == 0)
+      utils::logmesg(lmp, "samqeq: saddle BiCGStab stops at {:.3g} x tolerance\n", f);
+    return 2;
+  }
   if (strcmp(arg[0], "ionfield") == 0) {   // fix_modify ID ionfield on|off
     // Fixed non-group ION charges -> QEq RHS (add_fixed_charge_field).
     // `off` is the explicit acknowledgement that an ion-blind solve is intended — it silences
@@ -199,16 +210,16 @@ int FixQEqSam::modify_param(int narg, char **arg)
     if (strcmp(arg[1], "off") == 0) {
       ionfield_flag = 0; ionfield_ack = 1; ionfield_explicit = 1;
       if (comm->me == 0)
-        error->warning(FLERR, "samqeq: ionfield explicitly OFF — fixed non-group charged atoms (ions) are in"
-                              "the FORCES but NOT in the QEq solve (ion-blind Hamiltonian, acknowledged by the"
+        error->warning(FLERR, "samqeq: ionfield explicitly OFF — fixed non-group charged atoms (ions) are in "
+                              "the FORCES but NOT in the QEq solve (ion-blind Hamiltonian, acknowledged by the "
                               "deck). Valid as a control; say so when quoting physics.");
       return 2;
     }
     ionfield_flag = 1; ionfield_ack = 0; ionfield_explicit = 1;
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: ionfield ON — fixed non-group charges enter the QEq RHS as a shielded field"
-                          "(real + reciprocal, Ewald-complete). NOTE: this supplies the ion's electrostatic"
-                          "field only — necessary but NOT sufficient (it recovers only part of the QM dipole"
+      utils::logmesg(lmp, "samqeq: ionfield ON — fixed non-group charges enter the QEq RHS as a shielded field "
+                          "(real + reciprocal, Ewald-complete). NOTE: this supplies the ion's electrostatic "
+                          "field only — necessary but NOT sufficient (it recovers only part of the QM dipole "
                           "response at contact)\n");
     return 2;
   }
@@ -221,8 +232,8 @@ int FixQEqSam::modify_param(int narg, char **arg)
     if (strcmp(arg[1], "off") == 0) {
       shieldchk_on = 0;
       if (comm->me == 0)
-        error->warning(FLERR, "samqeq: shieldcheck OFF -- the pair<->fix shielding-kernel consistency"
-                              "assertion is disabled; forces and the charge solve may integrate different"
+        error->warning(FLERR, "samqeq: shieldcheck OFF -- the pair<->fix shielding-kernel consistency "
+                              "assertion is disabled; forces and the charge solve may integrate different "
                               "kernels, which breaks energy conservation");
     } else if (strcmp(arg[1], "on") == 0) {
       shieldchk_on = 1;
@@ -266,7 +277,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
         error->all(FLERR, "fix_modify recip_self peratom is not supported by fix {} (device add_reciprocal carries a scalar self-term)", style);
       lr_self_peratom = 1; lr_self_pinned = 0; lr_calibrated = 0; lr_self_first = 0.0;
       if (comm->me == 0)
-        utils::logmesg(lmp, "samqeq: recip_self = EXACT PER-ATOM grid self-coefficient (pppm/samqeq compute_self_peratom):"
+        utils::logmesg(lmp, "samqeq: recip_self = EXACT PER-ATOM grid self-coefficient (pppm/samqeq compute_self_peratom): "
                             "no probe calibration, no drift guard; refreshed at every solve\n");
       return 2;
     }
@@ -283,7 +294,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
     // from members the `units` command has already set (qqr2e at units time, dielectric = 1.0 from
     // the Force ctor). Same number, valid earlier.
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: grid reciprocal self-term PINNED at recip_self={:.5f} (raw) = {:.4f} eV/e"
+      utils::logmesg(lmp, "samqeq: grid reciprocal self-term PINNED at recip_self={:.5f} (raw) = {:.4f} eV/e "
                           "(not measured; operator is decomposition- and atom-order-independent)\n",
                      lr_self_meas, lr_self_meas*(force->qqr2e/force->dielectric)/ev_scale);
     return 2;
@@ -324,17 +335,17 @@ int FixQEqSam::modify_param(int narg, char **arg)
       if (comm->me == 0) {
         std::string ts;
         for (int t = 1; t <= nt; t++) if (gself_type[t]) ts += fmt::format(" {}", t);
-        utils::logmesg(lmp, "samqeq: gself RESTRICTED to type(s){} -- the self-energy is a lattice"
-                            "regulariser (metal sites, where eta is a bulk TF quantity with no width"
-                            "in it) and a DOUBLE COUNT on molecular sites, whose eta was fit to the"
+        utils::logmesg(lmp, "samqeq: gself RESTRICTED to type(s){} -- the self-energy is a lattice "
+                            "regulariser (metal sites, where eta is a bulk TF quantity with no width "
+                            "in it) and a DOUBLE COUNT on molecular sites, whose eta was fit to the "
                             "IP/EA of a finite-width atom\n", ts);
       }
     } else if (narg > used) {
-      error->all(FLERR, "fix_modify gself: unknown trailing keyword {} (use `width <A>` and/or"
+      error->all(FLERR, "fix_modify gself: unknown trailing keyword {} (use `width <A>` and/or "
                         "`types <t1> ...`)", arg[used]);
     }
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: gself {} -- finite-width charge self-energy K_e*sqrt(2a/pi) {} the on-site"
+      utils::logmesg(lmp, "samqeq: gself {} -- finite-width charge self-energy K_e*sqrt(2a/pi) {} the on-site "
                           "diagonal (width {}); folded into eta from eta0 at init()\n",
                      gself_flag ? "ON" : "OFF", gself_flag ? "ADDED to" : "removed from",
                      fmt::format("{:.3f} A", gself_width)
@@ -356,7 +367,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
     shield_rpair[ti][tj] = shield_rpair[tj][ti] = r;
     if (comm->me == 0) {
       const double rdef = sqrt(0.5*(gamma[ti]*gamma[ti] + gamma[tj]*gamma[tj]));
-      utils::logmesg(lmp, "samqeq: shieldpair ({},{}) pair Gaussian radius {} (combination-rule value {:.4f} A;"
+      utils::logmesg(lmp, "samqeq: shieldpair ({},{}) pair Gaussian radius {} (combination-rule value {:.4f} A; "
                           "a_ij = sqrt(lambda)/(2 R)); pushed to pair coul/shield/intra at init\n",
                      ti, tj, r > 0.0 ? fmt::format("= {:.4f} A", r) : std::string("OFF (rule)"), rdef);
     }
@@ -366,7 +377,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
     if (narg < 2) error->all(FLERR, "Illegal fix_modify shield: use `shield gaussian|cbrt|slater [lambda|2s ...]`");
     if (strcmp(arg[1], "gaussian") == 0)     shield_gauss = SHIELD_GAUSSIAN;
     else if (strcmp(arg[1], "pqeq") == 0)    // the keyword names the kernel (`gaussian`), not a force field
-      error->all(FLERR, "fix_modify shield:" "the Gaussian shielding kernel keyword is `gaussian`, not `pqeq` (same kernel); replace `pqeq` with `gaussian` in the deck");
+      error->all(FLERR, "fix_modify shield: " "the Gaussian shielding kernel keyword is `gaussian`, not `pqeq` (same kernel); replace `pqeq` with `gaussian` in the deck");
     else if (strcmp(arg[1], "cbrt") == 0)    shield_gauss = SHIELD_CBRT;
     else if (strcmp(arg[1], "slater") == 0)  shield_gauss = SHIELD_SLATER;
     else error->all(FLERR, "fix_modify shield: unknown mode {} (use gaussian|cbrt|slater)", arg[1]);
@@ -418,7 +429,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
     // HOST-ONLY (like slater): the kokkos fix's device H-build/matvec hardcode the
     // undamped kernels -- reject at parse rather than silently solving an undamped operator on the device.
     if (kokkosable)
-      error->all(FLERR, "fix_modify iondamp is host-only (the qeq/sam/kk device H-build does not apply the"
+      error->all(FLERR, "fix_modify iondamp is host-only (the qeq/sam/kk device H-build does not apply the "
                         "TT damping); use the host fix qeq/sam");
     if (narg < 4) error->all(FLERR, "Illegal fix_modify iondamp: need <typeI> <typeJ> <b> [<n>] | off");
     const int nt = atom->ntypes;
@@ -444,11 +455,11 @@ int FixQEqSam::modify_param(int narg, char **arg)
     lr_iondamp = 1;
     if (comm->me == 0) {
       double dfdx; double fres = samqeq_tt_damp(bdamp*swb, ttn, dfdx);
-      utils::logmesg(lmp, "samqeq: interionic TT damping ON -- types {}..{} x {}..{}: J_damp = f_{}(b r)*J_shield,"
-                          "b={:.4g} 1/A (f at swb={:.2f}: {:.6f}); pair coul/shield/intra must carry the SAME"
+      utils::logmesg(lmp, "samqeq: interionic TT damping ON -- types {}..{} x {}..{}: J_damp = f_{}(b r)*J_shield, "
+                          "b={:.4g} 1/A (f at swb={:.2f}: {:.6f}); pair coul/shield/intra must carry the SAME "
                           "iondamp pairs (force<->solve consistency)\n", ilo, ihi, jlo, jhi, ttn, bdamp, swb, fres);
       if (1.0 - fres > 1.0e-3)
-        error->warning(FLERR, "iondamp: TT damping not converged at the solve cutoff (1-f(b*swb)={:.2e} at"
+        error->warning(FLERR, "iondamp: TT damping not converged at the solve cutoff (1-f(b*swb)={:.2e} at "
                               "swb={:.2f}) -- the net Ewald kernel is discontinuous there; raise b (or swb)",
                               1.0 - fres, swb);
     }
@@ -472,7 +483,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
       error->all(FLERR, "fix_modify bondsoft: kappa and bcut must be > 0");
     if (comm->me == 0)
       utils::logmesg(lmp, "samqeq: bond-softness ACKS2 ON (Verstraelen X-block, kappa={:.4g}, bcut={:.3g} Ang) +"
-                          "Gaussian taper-cutoff H — gaps the FQ close-pair soft mode so the eta~J_shield(0)"
+                          "Gaussian taper-cutoff H — gaps the FQ close-pair soft mode so the eta~J_shield(0) "
                           "operator stays solvable at low eta (target polarization)\n", bond_softness, bcut_global);
     return 3;
   }
@@ -492,7 +503,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
       if ((c3_type && c3_type[t] != 0.0) || (c4_type && c4_type[t] != 0.0)) { stair = 1; break; }
     lr_quartic = (quartic_c4 != 0.0 || quartic_c != 0.0 || stair) ? 1 : 0;
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: QUARTIC near-crit cure {} (group {} c4={:.4g} c={:.4g} niter={} mix={:.2f}"
+      utils::logmesg(lmp, "samqeq: QUARTIC near-crit cure {} (group {} c4={:.4g} c={:.4g} niter={} mix={:.2f} "
                           "fld0={:.4g} qref={:.4g}); c4 term {}{}; damped-Picard SCF, q-only (no force term)\n",
                           lr_quartic ? "ON" : "OFF", arg[1], quartic_c4, quartic_c, quartic_niter, quartic_mix,
                           quartic_fld0, quartic_qref,
@@ -511,7 +522,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
     xl_qspike = utils::numeric(FLERR, arg[1], false, lmp);
     xl_kspike = utils::numeric(FLERR, arg[2], false, lmp);
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: XL charge spike-guard q_spike={:.3g} e, k_spike={:.3g} eV/e^2"
+      utils::logmesg(lmp, "samqeq: XL charge spike-guard q_spike={:.3g} e, k_spike={:.3g} eV/e^2 "
                           "(soft restoring force on |q| above q_spike, per-molecule projected)\n",
                           xl_qspike, xl_kspike);
     return 3;
@@ -523,7 +534,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
       warmstart = (strcmp(arg[2], "on") == 0);
       if (!warmstart && strcmp(arg[2], "off") != 0) error->all(FLERR, "fix_modify solver warmstart: use on|off");
       if (comm->me == 0)
-        utils::logmesg(lmp, "samqeq: charge predictor (warm-start from the previous converged charges) = {}"
+        utils::logmesg(lmp, "samqeq: charge predictor (warm-start from the previous converged charges) = {} "
                             "(cuts BO iteration count; first/single-point solve still cold-starts)\n",
                             warmstart ? "ON" : "off");
       return 3;
@@ -557,8 +568,8 @@ int FixQEqSam::modify_param(int narg, char **arg)
     if (narg > 2) { freeze_max = utils::inumeric(FLERR, arg[2], false, lmp); used = 3; }   // optional consecutive cap
     freeze_nconsec = 0;
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: ride-not-die (rnd) ON (max|q|>{:.3g} -> hold previous charges; cap"
-                          "{} consecutive steps) -- bounds energy injection from over-polarized near-critical"
+      utils::logmesg(lmp, "samqeq: ride-not-die (rnd) ON (max|q|>{:.3g} -> hold previous charges; cap "
+                          "{} consecutive steps) -- bounds energy injection from over-polarized near-critical "
                           "solves without committing them\n", lr_qfreeze, freeze_max);
     return used;
   }
@@ -575,7 +586,7 @@ int FixQEqSam::modify_param(int narg, char **arg)
       ridge_qonset = utils::numeric(FLERR, arg[2], false, lmp);   // per-atom runaway threshold (e)
       ridge_gain   = utils::numeric(FLERR, arg[3], false, lmp);   // escalation factor (>=... default 4 if <=1)
       if (comm->me == 0)
-        utils::logmesg(lmp, "samqeq: ridge mode = LOCAL per-atom ratchet: where |q_i|>{:.3g} e, multiply that atom's"
+        utils::logmesg(lmp, "samqeq: ridge mode = LOCAL per-atom ratchet: where |q_i|>{:.3g} e, multiply that atom's "
                             "diagonal ridge by {:.3g} and re-solve (bounds runaway charges; bulk untouched)\n",
                             ridge_qonset, (ridge_gain > 1.0 ? ridge_gain : 4.0));
       return 4;
@@ -601,11 +612,11 @@ int FixQEqSam::modify_param(int narg, char **arg)
       }
       lmin_step = -1;                                 // force a fresh estimate on the next solve
       if (comm->me == 0)
-        utils::logmesg(lmp, "samqeq: ridge mode = Lanczos lambda_min: ridge = max(lr_ridge, {:.4g} + {:.4g} - lambda_min)"
-                            "eV (floor + delta), {} Lanczos steps, recomputed every {} step(s) (continuous in config;"
-                            "matrix kept PD). The Ritz estimate is an UPPER bound on lambda_min: an unconverged m can"
-                            "only MISS a negative mode, never invent one -- m >= 60 recommended for interface cells;"
-                            "delta is the estimate-error budget, so lambda_min(A+ridge) >= floor whenever the estimate"
+        utils::logmesg(lmp, "samqeq: ridge mode = Lanczos lambda_min: ridge = max(lr_ridge, {:.4g} + {:.4g} - lambda_min) "
+                            "eV (floor + delta), {} Lanczos steps, recomputed every {} step(s) (continuous in config; "
+                            "matrix kept PD). The Ritz estimate is an UPPER bound on lambda_min: an unconverged m can "
+                            "only MISS a negative mode, never invent one -- m >= 60 recommended for interface cells; "
+                            "delta is the estimate-error budget, so lambda_min(A+ridge) >= floor whenever the estimate "
                             "is within delta of the true value\n",
                             lam_floor, ridge_delta, nlanczos, ridge_every);
       return used;

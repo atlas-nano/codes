@@ -78,11 +78,17 @@ class FixACKS2Sam : public FixQEqBaseSam {
                                               // but still fires for the uncapped fall-through solve.
   int acks2_exhausted = 0;                    // 1 if the LAST saddle solve ended by exhausting its iteration
                                               // budget or by a BiCGStab breakdown (omega/rho = 0) -- the failure
-                                              // signature the no-commit escalation keys on. BiCGStab's documented
-                                              // early exit (|q|^2 < tol) can leave rel-residual ~1e-4 at tol 1e-5
-                                              // on a CONVERGED solve, so the residual alone is not a failure test.
+                                              // signature the no-commit escalation keys on.
+  bigint acks2_nonconv = 0;      // uncapped saddle BiCGStab solves returned with resid/b > tolerance
+  bigint acks2_nreplace = 0;     // BiCGStab residual replacements (true b-Ax above the stop at a converged exit)
+  double acks2_relresid_rec = 0.0;  // RECURRENCE resid/b at the last converged BiCGStab exit (acks2_relresid = true)
+  int acks2_ntruewarn = 0;          // budget for the "true residual still above tol" warning
+  double acks2_stopscale = 0.01;    // saddle BiCGStab STOPS at stopscale*tolerance (`fix_modify <id> saddlestop <f>`).
+                                    // Its charge error per unit residual is ~10-200 on the saddle (MINRES ~1), so
+                                    // stopping at tol leaves charges up to ~1e-8 e off at tol 1e-10.
+                                    // nonconv=, the warnings and the ASPC gate still judge against tolerance.
   double acks2_relresid = 0.0;                // rel-residual of the LAST saddle solve (BiCGStab rnorm/bnorm,
-                                              // MINRES phibar/beta1). Mirrors the CG path's cg_relresid so the
+                                              // MINRES phibar/bnorm). Mirrors the CG path's cg_relresid so the
                                               // ASPC corrector can be quality-gated on the saddle too.
 
   // preconditioner hook (default = diagonal Jacobi); FixQEqSam overrides to add an ILU

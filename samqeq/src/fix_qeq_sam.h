@@ -135,6 +135,12 @@ class FixQEqSam : public FixACKS2Sam {
   // device the host build is wasted serial erf/erfc work.
   // Overridden in the kokkos fix; the base always says yes.
   virtual bool host_H_needed() { return true; }
+  // Build stamp of the CSR H: the neighbor build (neighbor->ncalls) and the timestep compute_H last assembled it for.
+  // ensure_host_H() rebuilds it when a host consumer runs on a step where the host build was skipped (an engaged
+  // device solve that a mid-step change, e.g. the per-atom ridge, turned into a host solve). Plain scalars: the Kokkos
+  // fix is copied per dispatch.
+  bigint h_build_ncalls = -1, h_build_step = -1;
+  void   ensure_host_H();
   /* ---- HOST-side phase timing (env SAMQEQ_HOST_TIME=1), printed by post_run ----
      Breaks down the host work that remains when the solve runs on device. Free when the env var is
      unset.*/
@@ -190,6 +196,18 @@ class FixQEqSam : public FixACKS2Sam {
   // (e.g. water O). `fix_modify <id> quartic <group> <c4> [<c>] [<niter>] [<mix>]`.
   int    lr_quartic = 0;           // 0 = off; 1 = quartic/cubic on-site term active
   int    quartic_groupbit = 0;     // atoms the term applies to (e.g. water O cores)
+  // Picard q0 SHIFT. The secant (dE/dq)/q of the on-site anharmonic term acts on the raw charge q, while the solve
+  // operator acts on x = q - q0; on a row with q0[t] != 0 Picard's fixed point would carry a gradient residual
+  // -E'(q)*q0/q. The RHS shift D*x_k - E'(q_k) on exactly those rows (D = the floored secant) makes the fixed point
+  // stationary. Set at init (anh_q0shift_init); 0 => nothing runs. Rows with q0 = 0 are never shifted.
+  int    anh_q0shift = 0;
+  double *anh_rhs = nullptr; int anh_rhs_cap = 0;
+  void   anh_rhs_alloc();
+  void   anh_q0shift_init();
+  inline bool anh_q0shift_row(int t, int m) const {   // an anharmonic row (type t, mask m) whose q0 is nonzero
+    if (!q0 || q0[t] == 0.0) return false;
+    return (m & quartic_groupbit) || c3_type[t] != 0.0 || c4_type[t] != 0.0;
+  }
   double quartic_c4 = 0.0;         // quartic coefficient c4 (the 1/24 c4 q^4 term)
   double quartic_c  = 0.0;         // optional cubic coefficient c (1/6 c q^3); 0 = pure quartic (the near-crit cure)
   int    quartic_niter = 20;       // max damped-Picard SCF iterations (the nonlinear diagonal)
@@ -298,6 +316,10 @@ class FixQEqSam : public FixACKS2Sam {
   //             and bare in the forces at all separations, so there is no small-residual regime. On
   //             in.tip4pfq_xl_slater the mismatch leaves the charges unchanged (the pair scope never enters
   //             the solve) but moves the liquid dipole 2.4631(28) -> 2.3396(14) D. Guarded to lr_ewald>=1.
+  //   6 UNSET/GAMMA/DIAG, per type pair from the type tables (np-independent): every type pair must be
+  //             assigned to coul/shield/intra under hybrid/overlay (refused at lr_ewald>=2, warned at 1); the
+  //             cbrt pair gamma_ij must match sqrt(gamma_i gamma_j) within shieldchk_tol; the gaussian/slater
+  //             per-type diagonal must match param col 4.
   // No-ops when no coul/shield/intra pair exists (file-mode / gas decks) and on the plain-DSF path
   // (which never calls shielded_coulomb()). Adds only an error path.
   void   check_shield_consistency();
@@ -465,6 +487,10 @@ class FixQEqSam : public FixACKS2Sam {
   bool   aspc_corr_call = false;  // qeq_cg is running as the ASPC capped corrector (imax = n_corr by design)
   bigint cg_nonconv = 0;          // genuine CG non-convergences (residual above tol at imax), warned 10x per run
   double cg_bnorm = 1.0;          // |b| of the last qeq_cg call (the resid/b denominator), for the ASPC committed residual
+  double cg_rhs_raw = 0.0;        // |b| of the UNPROJECTED RHS of the running main solve (the zero-RHS guard's scale;
+                                  //      0 = not a main-solve call => guard inert). Set/reset around the qeq_cg call only.
+  bigint cg_zero_rhs = 0;         // main solves whose projected RHS was zero to round-off (CG skipped, q = q0)
+  int    cg_zero_rhs_logged = 0;  // that note prints at most 3x per fix instance
   bigint aspc_nabove = 0, aspc_nabove_run = 0;   // accepted ASPC steps whose corrector resid/b > tolerance (total, run)
   int    aspc_above_warned = 0;
   double *ridge_atom;        // LOCAL ridge (mode 3): per-atom Tikhonov hardness on the diagonal, nonzero
@@ -552,9 +578,13 @@ class FixQEqSam : public FixACKS2Sam {
                                    // validity Allreduce sees rank disagreement; gates the warning only
 
   double solve_diag_of(int i);      // the lr solve-diagonal base at site i: eta[type], plus the quartic secant under lr_quartic
+  int    xl_bare_diag = 0;          // solve_diag_of -> bare eta[t], for the XL charge-force matvec only
   double eself_diag_of(int i, bool in_group);   // the HARMONIC part of that diagonal (no ridge, no quartic secant):
                                                  // the ONLY curvature compute_scalar may report
   int     lr_calibrated;     // measured the grid reciprocal self-term yet?
+  void    setup_arm_operator_self();  // arm pppm/samqeq's operator self term at a solve-less run-boundary setup
+  void    refresh_self_peratom_after_reneighbor();  // recip_self peratom on a step without a solve (nevery skip, XL)
+  int     opself_skip_warned = 0;
   int     lr_recip_probes = 16; // K deterministic probe pairs for the self-term calibration (default 16).
                                 // K>=1 selects the K lowest GLOBAL tags and averages, which is order-
                                 // independent by construction. 0 = a single pair by local ilist order
@@ -740,6 +770,15 @@ class FixQEqSam : public FixACKS2Sam {
                                                 // accumulation is byte-identical on both paths
   virtual int qeq_cg(double *b, double *x);     // projected Jacobi-preconditioned CG (PD on the subspace);
                                                 // virtual so qeq/sam/kk routes the lr_ewald=2 corrector to the device CG
+  // The projected solve operator A~ = P(eta + ridge + H + reciprocal) as the ENGAGED solver applies it, for the H
+  // consumers outside qeq_cg (estimate_lambda_min's Lanczos, the ASPC-DIAG committed residual). Default = the host
+  // qeq_matvec; the Kokkos fix serves it from the device when the host H is not being built.
+  virtual void lanczos_matvec(double *x, double *out) { qeq_matvec(x, out); }
+  // The CG epilogue shared by the host qeq_cg and the device CG: publishes cg_relresid/cg_bnorm (the ASPC accept gate
+  // and the committed-residual report read them), the budgeted non-convergence warning + cg_nonconv, and the periodic
+  // SOLVER-DIAG line.
+  void   cg_finish(int it, double signew, double bnorm, double tol_eff);
+  bool   cg_selfcheck = false;      // set around a self-check solve (Kokkos S9): cg_finish publishes, counts and prints nothing
   int    qeq_minres(double *b, double *x, double bref = -1.0);   // projected MINRES (symmetric INDEFINITE-
                                                 // safe). bref>0 = external reference norm for the relative
                                                 // stopping criterion (the FULL-BO RHS norm when solving the

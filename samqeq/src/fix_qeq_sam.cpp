@@ -24,6 +24,7 @@
 #include "domain.h"
 #include "error.h"
 #include "force.h"
+#include "pair.h"
 #include "group.h"
 #include "memory.h"
 #include "modify.h"   // check_drude_consistency() scans modify->fix for a `fix drude`
@@ -34,11 +35,13 @@
 #include "tokenizer.h"
 #include "update.h"
 #include "kspace.h"
+#include "pair_hybrid.h"              // PairHybrid::check_ijtype (sub-style assignment, channel 6)
 #include "pair_coul_shield_intra.h"   // iondamp fix<->pair consistency cross-check (init())
 #include "pppm_samqeq.h"   // self-contained per-atom kspace potential (compute_vector); no ELECTRODE pkg
 #include "random_mars.h"   // xl_random (the Langevin charge thermostat)
 #include "math_const.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <exception>
@@ -153,6 +156,7 @@ FixQEqSam::~FixQEqSam()
   memory->destroy(shield_rpair);
   memory->destroy(lr_self_atom);
   memory->destroy(c3_type); memory->destroy(c4_type);   // per-type staircase coeffs
+  memory->destroy(anh_rhs);                             // Picard q0-shift RHS
   // gself_type is per-type CONFIG from `fix_modify ... gself types <...>`, not per-run storage, so it is
   // freed here and NOT in deallocate_storage(), which runs BETWEEN RUNS: freeing it there while gself_flag
   // survives would turn a type-scoped fold silently global on the next run.
@@ -169,6 +173,9 @@ FixQEqSam::~FixQEqSam()
   memory->destroy(molinv); memory->destroy(molsum);
   memory->destroy(mol2c); memory->destroy(c2mol); memory->destroy(cmol);   // compact projector reindex
   memory->destroy(molinv_active);                                          // persistent pass-1 scratch
+  // drop the operator self term pushed into pppm/samqeq. At LAMMPS teardown `force` is deleted and nulled BEFORE
+  // `modify` (lammps.cpp destroy), so test it; the address check skips a kspace that was replaced.
+  if (eksp && force && force->kspace && dynamic_cast<SamqeqKspace *>(force->kspace) == eksp) eksp->clear_operator_self();
   delete xl_random;               // Langevin charge-thermostat RNG
   memory->destroy(fixq_field);   // fixed non-group charge field
   memory->destroy(q0field);        // q0 reference-charge field
@@ -270,43 +277,92 @@ void FixQEqSam::deallocate_storage()
 void FixQEqSam::setup_pre_force(int vflag)
 {
   setup_resolve = (update->ntimestep > 0) ? 1 : 0;     // boundary/restart -> skip re-solve; fresh first setup -> solve
+  h_build_ncalls = -1;   // setup rebuilt the lists (and Verlet resets neighbor->ncalls): no earlier CSR H is current
   // ---- Disclose the ACTIVE self-term at every run start (one line, so a carried-over outlier is visible
   // without parsing hundreds of calibration lines), and warn ONCE per run when the single-pair route is
   // about to be re-drawn under a changing box. ------------------
   lr_self_atom_logged = 0;                              // per-atom stats line once per run
   if (lr_ewald >= 2 && !lr_nrecip && lr_self_peratom && comm->me == 0)
-    utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): EXACT PER-ATOM grid self-coefficient"
+    utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): EXACT PER-ATOM grid self-coefficient "
                         "(stats follow at the first solve)\n", update->ntimestep);
   if (lr_ewald >= 2 && !lr_nrecip && !lr_self_peratom && comm->me == 0) {
     const double f = force->qqrd2e/ev_scale;
     const std::string route = lr_recip_probes ? fmt::format("K={} deterministic-probe", lr_recip_probes)
                                               : std::string("single-pair");
     if (lr_self_pinned)
-      utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): {:.5f} raw = {:.4f} eV/e, PINNED"
+      utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): {:.5f} raw = {:.4f} eV/e, PINNED "
                           "(fix_modify recip_self)\n", update->ntimestep, lr_self_meas, lr_self_meas*f);
     else if (!lr_calibrated)
-      utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): not yet calibrated -- measured at"
+      utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): not yet calibrated -- measured at "
                           "the first solve by the {} route\n", update->ntimestep, route);
     else if (lr_ncalib == 0)     // calibrated but never measured in THIS run series: restored from a restart file
-      utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): {:.5f} raw = {:.4f} eV/e, RESTORED from"
+      utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): {:.5f} raw = {:.4f} eV/e, RESTORED from "
                           "the restart file (the writing run's route is not recorded); kept until the grid changes\n",
                      update->ntimestep, lr_self_meas, lr_self_meas*f);
     else
-      utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): {:.5f} raw = {:.4f} eV/e, {} route,"
-                          "calibration #{} at step {} on the {}x{}x{} mesh; first at this mesh {:.5f} (step {}),"
+      utils::logmesg(lmp, "samqeq: recip_self ACTIVE at run start (step {}): {:.5f} raw = {:.4f} eV/e, {} route, "
+                          "calibration #{} at step {} on the {}x{}x{} mesh; first at this mesh {:.5f} (step {}), "
                           "drift {:+.3f}%\n", update->ntimestep, lr_self_meas, lr_self_meas*f, route, lr_ncalib,
                      lr_self_step, lr_nx, lr_ny, lr_nz, lr_self_first, lr_first_step,
                      lr_self_first != 0.0 ? 100.0*(lr_self_meas - lr_self_first)/lr_self_first : 0.0);
     if (!lr_self_pinned && lr_recip_probes == 0 && domain->box_change_size)
-      error->warning(FLERR, "samqeq: this run changes the box (NPT/deform) with the single-pair recip_self"
-                            "calibration: every >0.1% box-length change re-draws the self-term from ONE probe pair,"
-                            "which is not deterministic across draws (under NPT a draw can land several percent"
-                            "low). Use `fix_modify {} recip_probes"
-                            "16` (deterministic multi-probe), or pin the fixed-box value with `fix_modify {}"
-                            "recip_self <raw>` for a reproduction control. The drift guard aborts this run at"
+      error->warning(FLERR, "samqeq: this run changes the box (NPT/deform) with the single-pair recip_self "
+                            "calibration: every >0.1% box-length change re-draws the self-term from ONE probe pair, "
+                            "which is not deterministic across draws (under NPT a draw can land several percent "
+                            "low). Use `fix_modify {} recip_probes "
+                            "16` (deterministic multi-probe), or pin the fixed-box value with `fix_modify {} "
+                            "recip_self <raw>` for a reproduction control. The drift guard aborts this run at "
                             "2% from the first calibration.", id, id);
   }
+  // PPPM sized its mesh at init() from the charges present at `run` start; a cold (q~0) start gets a coarse grid and a
+  // low recip_self for the whole run. After a setup solve that actually ran, re-size if the mesh misses the kspace
+  // accuracy for the solved charges (g_ewald held -- see samqeq_kspace.h) and repeat the solve from the SAME starting
+  // state (atom->q, ASPC q_hist, the s/t/X/KKT-row warm-start histories restored -- the saddle's initial guess
+  // extrapolates them): the result equals a run with that mesh AND that g_ewald pinned (`kspace_modify mesh ..
+  // gewald ..`; pinning the mesh alone lets adjust_gewald() move g_ewald). XL runs have no setup solve.
+  const bool resize_mesh = eksp && !lr_nrecip && !lr_xl && !setup_resolve;
+  std::vector<double> q_start, qh_start, sh_start, th_start, sx_start, sl_start;
+  const int have_start = aspc_have, nh = (q_hist ? aspc_nhist : 0);
+  const bigint build_start = aspc_build;
+  auto save2d = [](std::vector<double> &v, double **a, int n, int w) {
+    v.clear(); if (a) for (int i = 0; i < n; i++) v.insert(v.end(), a[i], a[i] + w); };
+  auto load2d = [](const std::vector<double> &v, double **a, int n, int w) {
+    if (a && !v.empty()) for (int i = 0; i < n; i++) std::copy(&v[(size_t) i*w], &v[(size_t) i*w] + w, a[i]); };
+  if (resize_mesh) {
+    const int nlocal = atom->nlocal;
+    q_start.assign(atom->q, atom->q + nlocal);
+    save2d(qh_start, q_hist, nlocal, nh);
+    save2d(sh_start, s_hist, nlocal, nprev);
+    save2d(th_start, t_hist, nlocal, nprev);
+    save2d(sx_start, s_hist_X, nlocal, nprev);
+    save2d(sl_start, s_hist_last, 2, nprev);
+  }
   FixQEqBaseSam::setup_pre_force(vflag);                // -> init_storage + pre_force (skips the re-solve if setup_resolve)
+  for (int pass = 0; resize_mesh && pass < 3; pass++) {
+    int od[3], nd[3];
+    if (!eksp->resize_mesh_from_charges(od, nd)) break;
+    if (comm->me == 0)
+      utils::logmesg(lmp, "samqeq: PPPM mesh {}x{}x{} was sized from the run-start charges and misses the kspace "
+                          "accuracy for the solved charges -- re-sized to {}x{}x{} at the held g_ewald {:.17g}, setup solve "
+                          "repeated from the same start (to compare readouts across runs/restarts pin BOTH: "
+                          "`kspace_modify mesh {} {} {} gewald {:.17g}`)\n",
+                     od[0], od[1], od[2], nd[0], nd[1], nd[2], force->kspace->g_ewald, nd[0], nd[1], nd[2],
+                     force->kspace->g_ewald);
+    const int nlocal = atom->nlocal;
+    std::copy(q_start.begin(), q_start.end(), atom->q);
+    load2d(qh_start, q_hist, nlocal, nh);
+    load2d(sh_start, s_hist, nlocal, nprev);
+    load2d(th_start, t_hist, nlocal, nprev);
+    load2d(sx_start, s_hist_X, nlocal, nprev);
+    load2d(sl_start, s_hist_last, 2, nprev);
+    aspc_have = have_start; aspc_build = build_start;
+    lmin_step = -1; q0field_step = -1;   // the lambda_min / q0field caches were built on the old operator
+    // the coarse-mesh self term is what the re-size replaces: recalibrate as a first calibration, so the
+    // across-a-mesh-change consistency warning does not fire on the move this re-size exists to make
+    if (!lr_self_pinned && !lr_self_peratom) lr_calibrated = 0;
+    comm_v = atom->q; pack_flag = 6; comm->forward_comm(this);   // ghosts back to the start charges
+    FixQEqBaseSam::setup_pre_force(vflag);
+  }
   setup_resolve = 0;
 }
 
@@ -317,15 +373,15 @@ void FixQEqSam::init()
   //   functional; pe + E_self is the energy the forces integrate (zero force / zero virial ⇒ dynamics identical).
   if (comm->me == 0) {
     if (thermo_energy)
-      utils::logmesg(lmp, "samqeq: E_self = sum(chi q + 1/2 eta qs^2) INCLUDED in pe/etotal (fix_modify {} energy yes;"
+      utils::logmesg(lmp, "samqeq: E_self = sum(chi q + 1/2 eta qs^2) INCLUDED in pe/etotal (fix_modify {} energy yes; "
                           "eselfref {}) -- pe + E_self is the energy the forces integrate\n",
                      id, eself_qs ? "qs = q - q0" : "q (physical-q basis)");
     else
-      error->warning(FLERR, "samqeq: E_self EXCLUDED from pe/etotal (fix_modify {} energy no): thermo pe is NOT the energy"
+      error->warning(FLERR, "samqeq: E_self EXCLUDED from pe/etotal (fix_modify {} energy no): thermo pe is NOT the energy "
                             "the forces integrate; wall targets, dH and dU derived from pe are incomplete by exactly f_{}",
                      id, id);
     if (thermo_energy && !eself_qs)
-      error->warning(FLERR, "samqeq: eselfref q (physical-q basis): reported etotal carries sum(eta*q0*q(t)), which is"
+      error->warning(FLERR, "samqeq: eselfref q (physical-q basis): reported etotal carries sum(eta*q0*q(t)), which is "
                             "not constant when q0 != 0 -- use `fix_modify {} eselfref qs` for the conserved functional", id);
   }
   // gself: (re)fold the finite-width charge self-energy into eta from the eta0 backup.
@@ -384,7 +440,7 @@ void FixQEqSam::init()
   // charge neutrality (the standard QEq constraint for a bare solid).
   if (lr_ewald && !atom->molecule_flag) {
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: no molecule IDs -> one global fragment"
+      utils::logmesg(lmp, "samqeq: no molecule IDs -> one global fragment "
                           "(global charge-neutrality constraint)\n");
   }
 
@@ -400,11 +456,11 @@ void FixQEqSam::init()
   // lr_ewald>=2 (full Ewald + `fix_modify cutoff on` taper) and the gas path (lr_ewald=0,lr_alpha=0).
   if (lr_iondamp) {
     if (lr_ewald == 1)
-      error->all(FLERR, "samqeq: fix_modify iondamp is not supported with lr_ewald=1 (inter-molecular -- i.e."
+      error->all(FLERR, "samqeq: fix_modify iondamp is not supported with lr_ewald=1 (inter-molecular -- i.e. "
                         "ion-ion -- pairs are BARE 1/r there, never shielded); use lr_ewald>=2");
     if (!lr_ewald && lr_alpha > 0.0)
       error->all(FLERR, "samqeq: fix_modify iondamp is not supported with plain DSF (lr_alpha>0, lr_ewald=0) --"
-                        "that branch never calls the shielded kernel; supported paths are lr_ewald>=2 and the"
+                        "that branch never calls the shielded kernel; supported paths are lr_ewald>=2 and the "
                         "gas path (lr_ewald=0, lr_alpha=0)");
     // A fix/pair iondamp SPLIT is silent otherwise -- the
     // solve equilibrates on the damped kernel while the forces/energy ride the undamped one (or vice versa).
@@ -416,7 +472,7 @@ void FixQEqSam::init()
       // no-op on every device deck.
       auto *csp = dynamic_cast<PairCoulShieldIntra *>(force->pair_match("coul/shield/intra", 0));
       if (!csp)
-        error->warning(FLERR, "iondamp: no pair coul/shield/intra found -- the pair FORCES/ENERGY are not"
+        error->warning(FLERR, "iondamp: no pair coul/shield/intra found -- the pair FORCES/ENERGY are not "
                               "damped (solve<->force inconsistency) unless another route provides them");
       else {
         int nbad = 0;
@@ -425,8 +481,8 @@ void FixQEqSam::init()
             if (iondamp_b[i][j] != csp->iondamp_bget(i, j) ||
                 (iondamp_b[i][j] > 0.0 && iondamp_n[i][j] != csp->iondamp_nget(i, j))) nbad++;
         if (!csp->iondamp_active() || nbad)
-          error->warning(FLERR, "iondamp: fix_modify and pair coul/shield/intra iondamp settings DISAGREE for"
-                                "{} type pair(s) (pair iondamp {}) -- solve and forces see different ion-ion"
+          error->warning(FLERR, "iondamp: fix_modify and pair coul/shield/intra iondamp settings DISAGREE for "
+                                "{} type pair(s) (pair iondamp {}) -- solve and forces see different ion-ion "
                                 "kernels; make both carry the same `iondamp <I> <J> <b> [<n>]`",
                                 nbad, csp->iondamp_active() ? "on" : "OFF");
       }
@@ -436,6 +492,7 @@ void FixQEqSam::init()
   // Assert the pair<->fix shielding-kernel channels (range/mode/lambda/2s/scope).
   // Placed AFTER build_slater_tables() above — the range residual evaluates shielded_coulomb(), which
   // reads slater_tabs when the Slater kernel is active.
+  anh_q0shift_init();           // Picard q0 shift (needs lr_quartic, q0 and lr_xl settled)
   push_shield_pairs();          // per-pair shielding radii -> pair style (before the consistency check)
   check_shield_consistency();
 
@@ -456,6 +513,18 @@ void FixQEqSam::init()
   //   as the working coul/shield path (which also has no self-term). Pair forces: coul/dsf (e_self there
   //   is a per-atom energy offset with no force; harmless for dynamics/pressure). [Energy conservation of
   //   the absolute NVE energy may need NVT or a self-term-free DSF pair.]
+  // The gas route (param header lr_ewald 0) solves with the TAPERED shielded H (7th-order taper over 0 -> swb) and no
+  // reciprocal, or with the shifted erfc/r of pair coul/dsf when lr_alpha > 0. Under a kspace style pe is the untapered
+  // shielded Coulomb plus the Ewald images, a functional these charges do not minimise (measured on a gas Li2S8 cell:
+  // FD force error 7.7e-3 eV/A, NVE drift 3e-2 eV in 375 fs). Refuse the combination and name the matching routes.
+  if (!lr_ewald && force->kspace)
+    error->all(FLERR, "samqeq: the param header selects the gas route (6th field lr_ewald 0{}), but kspace_style {} is "
+                      "defined, so pe is an Ewald energy the gas-route charges do not minimise. Use the Ewald route: set "
+                      "the param header's 6th field to 2 with pair coul/long + coul/shield/intra ... all + kspace_style "
+                      "pppm/samqeq; or drop the kspace style (and coul/long) to keep the gas route{}",
+               lr_alpha > 0.0 ? fmt::format(", DSF alpha {:.4g}", lr_alpha) : std::string(),
+               force->kspace_style ? force->kspace_style : "?",
+               lr_alpha > 0.0 ? fmt::format(" with the matching pair coul/dsf {:.4g} {:.4g}", lr_alpha, swb) : std::string());
   if (lr_ewald) {
     // Route B: full Ewald, reciprocal IN the matvec. Real-space = plain erfc(g_ewald r)/r in compute_H;
     // reciprocal applied each matvec via PPPMSamqeq::compute_vector, with the MEASURED grid self
@@ -473,22 +542,39 @@ void FixQEqSam::init()
     lr_alpha = force->kspace->g_ewald;      // erfc damping == the kspace Ewald split
     e_shift = f_shift = 0.0;                 // no DSF shift in Ewald mode (reciprocal completes 1/r)
     if (comm->me == 0 && screen)
-      utils::logmesg(lmp, "samqeq: long-range EWALD (reciprocal-in-matvec) on (alpha=g_ewald={:.4f},"
+      utils::logmesg(lmp, "samqeq: long-range EWALD (reciprocal-in-matvec) on (alpha=g_ewald={:.4f}, "
                           "swb={:.2f}); pair MUST be lj/cut/coul/long + kspace pppm/samqeq\n", lr_alpha, swb);
+    // The solve truncates its real-space erfc(g r)/r at swb, while the pair's coul/long keeps it to its own cutoff. A
+    // different swb drops erfc(g r_t)/r_t per pair from one side, so the charges minimise a different functional than pe
+    // (swb 8 vs coul/long 10 at g 0.30: ~1.2e-3 eV/e^2 per pair, beyond the shieldcheck RANGE tolerance, which watches
+    // coul/shield/intra only). Looked up by sub-style (partial match, so /kk counts) -- never through the hybrid's own
+    // extract, which aborts when sub-style cutoffs differ. Not on the cutoff-H path (lr_nrecip: no Ewald split).
+    if (comm->me == 0 && !lr_nrecip) {
+      int dim = 0; double *pc = nullptr;
+      if (Pair *pl = force->pair_match("coul/long", 0)) pc = static_cast<double *>(pl->extract("cut_coul", dim));
+      if (pc && dim == 0 && fabs(*pc - swb) > 1.0e-6) {
+        const double rt = MIN(*pc, swb);
+        const double drop = force->qqrd2e*erfc(lr_alpha*rt)/rt;   // kernel the shorter side omits at its truncation radius
+        error->warning(FLERR, "samqeq: solve cutoff swb ({:.4g}) != pair coul/long cutoff ({:.4g}) under kspace: the real-space "
+                              "Ewald kernel erfc(g r)/r is {:.3g} energy/e^2 per pair at r = {:.4g} (g_ewald {:.4f}), kept by one "
+                              "side and dropped by the other, so the charges do not minimise the reported energy. Set the "
+                              "coul/long cutoff equal to swb", swb, *pc, drop, rt, lr_alpha);
+      }
+    }
   } else if (lr_alpha > 0.0) {
     // shield slater is untested combined with plain DSF: compute_H's DSF branch (below) computes
     // erfc(αr)/r-e_shift-r*f_shift directly and NEVER calls shielded_coulomb() at all, so `shield slater` would
     // silently have ZERO effect here (and the combination is not validated) -- error instead.
     if (shield_gauss == SHIELD_SLATER)
-      error->all(FLERR, "samqeq: fix_modify shield slater is not supported with plain DSF (lr_alpha>0,"
-                        "lr_ewald=0) -- supported paths are lr_ewald>=2 (full Ewald), `fix_modify cutoff"
+      error->all(FLERR, "samqeq: fix_modify shield slater is not supported with plain DSF (lr_alpha>0, "
+                        "lr_ewald=0) -- supported paths are lr_ewald>=2 (full Ewald), `fix_modify cutoff "
                         "on` (taper-cutoff), and the gas path (lr_ewald=0, lr_alpha=0)");
     double a = lr_alpha, rc = swb;
     double erfcc = erfc(a*rc), erfcd = exp(-a*a*rc*rc);
     f_shift = -(erfcc/(rc*rc) + 2.0*a/MY_PIS*erfcd/rc);
     e_shift = erfcc/rc - f_shift*rc;
     if (comm->me == 0 && screen)
-      utils::logmesg(lmp, "samqeq: long-range DSF on (alpha={:.3f}, swb={:.2f}); bare eta diagonal"
+      utils::logmesg(lmp, "samqeq: long-range DSF on (alpha={:.3f}, swb={:.2f}); bare eta diagonal "
                           "(no self-term); pair MUST be coul/dsf {:.3f} {:.2f}\n", a, rc, a, rc);
   }
 
@@ -588,8 +674,8 @@ void FixQEqSam::check_shield_consistency()
     // so the tolerance means the same physical thing in both unit styles.
     worst *= force->qqrd2e / ev_scale;
     if (worst > shieldchk_tol)
-      bad += fmt::format("\n RANGE pair cutoff {:.4g} vs fix swb {:.4g} -- the shielding correction is"
-                         "still {:.4g} eV/e^2 at r = {:.4g} (tol {:.4g}; worst type pair {}-{}, col4"
+      bad += fmt::format("\n RANGE pair cutoff {:.4g} vs fix swb {:.4g} -- the shielding correction is "
+                         "still {:.4g} eV/e^2 at r = {:.4g} (tol {:.4g}; worst type pair {}-{}, col4 "
                          "{:.4g}/{:.4g})", pcut, swb, worst, rt, shieldchk_tol, wi, wj, gamma[wi], gamma[wj]);
   }
 
@@ -621,60 +707,92 @@ void FixQEqSam::check_shield_consistency()
       bad += fmt::format("\n SCOPE pair corrects {} pairs, solve (lr_ewald={}) shields {} -- {}",
                          pair_all ? "ALL" : "INTRA-molecular", lr_ewald,
                          solve_all ? "ALL pairs" : "INTRA-molecular pairs only",
-                         solve_all ? "add the `all` keyword to pair_style coul/shield/intra, or set"
+                         solve_all ? "add the `all` keyword to pair_style coul/shield/intra, or set "
                                      "the param-file header's 6th field (lr_ewald) to 1"
-                                   : "drop the `all` keyword from pair_style coul/shield/intra, or"
+                                   : "drop the `all` keyword from pair_style coul/shield/intra, or "
                                      "set the param-file header's 6th field (lr_ewald) to 2");
   }
 
-  // --- channel 6: COVERAGE, i.e. whether the pair style corrects every solved type pair at all. Under
-  //   pair_style hybrid/overlay LAMMPS mixes a sub-style's coefficients only for type pairs that no other
-  //   sub-style already covers, so per-type lines (`pair_coeff 1 1 coul/shield/intra ...`, `2 2 ...`)
-  //   beside `pair_coeff * * coul/long` leave the cross pairs with no shielding correction in the forces
-  //   while the solve applies it to them. The sub-style's setflag records exactly the pairs it was given.
-  //   Pairs checked: every pair of solved types under the all-pairs scope, the pairs that share a
-  //   molecule under the intramolecular scope. A lone (non-hybrid) coul/shield/intra mixes as usual.
-  if (force->pair != csp && csp->setflag) {
-    const int nt = atom->ntypes;
-    std::vector<int> need((nt + 1) * (nt + 1), 0), all((nt + 1) * (nt + 1), 0);
-    const int *type = atom->type, *mask = atom->mask;
-    const int nlocal = atom->nlocal;
-    if (lr_ewald >= 2 || !atom->molecule_flag) {
-      std::vector<int> has(nt + 1, 0);
-      for (int i = 0; i < nlocal; i++) if (mask[i] & groupbit) has[type[i]] = 1;
-      for (int a = 1; a <= nt; a++)
-        for (int b = a; b <= nt; b++) need[a * (nt + 1) + b] = has[a] && has[b] && (lr_ewald >= 2);
-    } else {
-      std::map<tagint, std::vector<int>> mol;
-      for (int i = 0; i < nlocal; i++)
-        if (mask[i] & groupbit) mol[atom->molecule[i]].push_back(type[i]);
-      for (auto &m : mol)
-        for (size_t u = 0; u < m.second.size(); u++)
-          for (size_t v = u + 1; v < m.second.size(); v++) {
-            const int a = MIN(m.second[u], m.second[v]), b = MAX(m.second[u], m.second[v]);
-            need[a * (nt + 1) + b] = 1;
+  // --- channel 6: per-type-pair ASSIGNMENT and kernel PARAMETER. The pair takes its kernel parameter from
+  //   its own pair_coeff lines; the solve takes it from param col 4. Built from the type tables only (no
+  //   per-atom data), so the verdict does not depend on the rank count or the domain decomposition.
+  //   (a) ASSIGNMENT, every kernel: under pair_style hybrid/overlay an off-diagonal type pair that is never
+  //       given a coul/shield/intra pair_coeff is NOT assigned to this sub-style (the `* *` lines of the other
+  //       sub-styles already mark it set, so no mixing happens) and carries BARE Coulomb in the forces while
+  //       the solve shields it. Refused when the solve shields every pair (lr_ewald >= 2). Under the
+  //       intramolecular scope (lr_ewald = 1) a type pair that never shares a molecule is bare on BOTH sides,
+  //       which a type-table check cannot distinguish, so there it only warns.
+  //   (b) GAMMA, cbrt: the solve uses sqrt(gamma_i gamma_j) (shielded_coulomb) for every type pair. The kernel
+  //       difference is largest at r = 0, where it equals |delta gamma| (J(0) = gamma), so a pair is refused
+  //       when |delta gamma| * qqrd2e/ev_scale > shieldchk_tol (eV per unit charge pair, as channel 1). A
+  //       4-digit 0.3536 for 0.353553 (6.7e-4 eV/e^2) passes; `* * 0.5` against gamma 0.25 (3.6 eV/e^2) does not.
+  //   (c) DIAG, gaussian/slater: the pair's per-type diagonal (Rc resp. zeta) must equal param col 4 to 1e-4
+  //       relative; per-pair radius overrides are channel 3 (RPAIR).
+  //   Types absent from the param file (col 4 <= 0) are skipped, as in channel 1.
+  {
+    auto *hyb = dynamic_cast<PairHybrid *>(force->pair);
+    char kw[]  = "coul/shield/intra";
+    char kwk[] = "coul/shield/intra/kk";
+    const double toev = force->qqrd2e / ev_scale;
+    int nwrong = 0, nunset = 0, ndiag = 0;
+    std::string t, tu, td;
+    for (int i = 1; i <= atom->ntypes; i++) {
+      if (gamma[i] <= 0.0) continue;
+      if (pmode == shield_gauss && pmode != SHIELD_CBRT) {
+        const double gp = csp->shield_gamma_get(i, i);
+        if (fabs(gp - gamma[i]) > 1.0e-4 * gamma[i]) {
+          if (ndiag < 8) td += fmt::format(" type {} pair {:.6g}/param {:.6g}", i, gp, gamma[i]);
+          ndiag++;
+        }
+      }
+      for (int j = i; j <= atom->ntypes; j++) {
+        if (gamma[j] <= 0.0) continue;
+        const bool assigned = !hyb || hyb->check_ijtype(i, j, kw) || hyb->check_ijtype(i, j, kwk);
+        if (!assigned) {
+          if (nunset < 8) tu += fmt::format(" ({},{})", i, j);
+          nunset++;
+          continue;
+        }
+        if (pmode == SHIELD_CBRT && shield_gauss == SHIELD_CBRT) {
+          const double gs = sqrt(gamma[i] * gamma[j]), gp = csp->shield_gamma_get(i, j);
+          if (fabs(gp - gs) * toev > shieldchk_tol) {
+            if (nwrong < 8) t += fmt::format(" ({},{}) pair {:.6g}/solve {:.6g}", i, j, gp, gs);
+            nwrong++;
           }
+        }
+      }
     }
-    MPI_Allreduce(need.data(), all.data(), (nt + 1) * (nt + 1), MPI_INT, MPI_MAX, world);
-    std::string t;
-    for (int a = 1; a <= nt; a++)
-      for (int b = a; b <= nt; b++)
-        if (all[a * (nt + 1) + b] && !csp->setflag[a][b]) t += fmt::format(" ({},{})", a, b);
-    if (!t.empty())
-      bad += "\n COVERAGE no coul/shield/intra coefficients for solved type pair(s)" + t +
-             " -- under pair_style hybrid/overlay LAMMPS does not mix a sub-style across type pairs another"
-             "sub-style already covers; give `pair_coeff * * coul/shield/intra ...` or one line per pair";
+    if (nwrong > 0)
+      bad += fmt::format("\n GAMMA {} type pair(s) with pair gamma != solve sqrt(gamma_i gamma_j) by more than "
+                         "tol {:.4g} eV/e^2:{}{} -- give every type pair an explicit "
+                         "`pair_coeff i j coul/shield/intra sqrt(gamma_i gamma_j)` from param col 4 (a single "
+                         "`* *` value is right only if every type has the same gamma)",
+                         nwrong, shieldchk_tol, t, nwrong > 8 ? " ..." : "");
+    if (ndiag > 0)
+      bad += fmt::format("\n DIAG {} type(s) whose pair {} parameter != param col 4:{}{}", ndiag,
+                         kname[pmode], td, ndiag > 8 ? " ..." : "");
+    if (nunset > 0) {
+      const std::string m = fmt::format("{} type pair(s) have no coul/shield/intra pair_coeff, so the pair "
+                                        "carries BARE Coulomb for them:{}{} -- under pair_style hybrid/overlay "
+                                        "LAMMPS does not mix a sub-style across type pairs another sub-style "
+                                        "already covers; give each an explicit pair_coeff", nunset, tu,
+                                        nunset > 8 ? " ..." : "");
+      if (lr_ewald >= 2) bad += "\n UNSET " + m;
+      else if (comm->me == 0)
+        error->warning(FLERR, "samqeq: {} (intramolecular scope: harmless only if those types never share "
+                              "a molecule)", m);
+    }
   }
 
   if (bad.empty()) return;
 
-  error->all(FLERR, "samqeq: shielding-kernel MISMATCH between pair coul/shield/intra and fix {} -- the"
+  error->all(FLERR, "samqeq: shielding-kernel MISMATCH between pair coul/shield/intra and fix {} -- the "
                     "pair FORCES/ENERGY and the charge SOLVE would use different kernels:{}\n"
                     "  fix {}: swb {:.4g}, kernel {}\n"
                     "  pair coul/shield/intra: cutoff {:.4g}, scope {}, kernel {}\n"
-                    "  Fix: make both sides agree -- match the pair cutoff to swb, and select the same"
-                    "SET of pairs on both sides (pair `all` <-> param-file lr_ewald>=2)."
-                    "See the channel notes in fix_qeq_sam.h."
+                    "  Fix: make both sides agree -- match the pair cutoff to swb, and select the same "
+                    "SET of pairs on both sides (pair `all` <-> param-file lr_ewald>=2). "
+                    "See the channel notes in fix_qeq_sam.h. "
                     "Override with `fix_modify {} shieldcheck <tol>` or `... shieldcheck off`.",
              id, bad, id, swb, kname[shield_gauss],
              pcut, csp->shield_intra_only() ? "intra" : "all", kname[pmode], id);
@@ -689,7 +807,7 @@ void FixQEqSam::check_drude_consistency()
 {
   for (int ifix = 0; ifix < modify->nfix; ifix++)
     if (strcmp(modify->fix[ifix]->style, "drude") == 0)
-      error->all(FLERR, "fix qeq/sam does not support Drude shells (`fix drude`): the shell charges would be in the"
+      error->all(FLERR, "fix qeq/sam does not support Drude shells (`fix drude`): the shell charges would be in the "
                         "forces and absent from the charge solve");
 }
 
@@ -726,9 +844,9 @@ void FixQEqSam::check_ionfield_consistency()
   if (ionfield_flag) {
     if (comm->me == 0)
       error->warning(FLERR,
-        "samqeq: {} fixed charged atom(s) lie outside the charge-solve group; their shielded field is coupled"
-        "into the QEq right-hand side (ionfield ON by default). This supplies the ions' electrostatic field"
-        "only -- necessary but NOT sufficient (~56% of the QM dipole response at contact)."
+        "samqeq: {} fixed charged atom(s) lie outside the charge-solve group; their shielded field is coupled "
+        "into the QEq right-hand side (ionfield ON by default). This supplies the ions' electrostatic field "
+        "only -- necessary but NOT sufficient (~56% of the QM dipole response at contact). "
         "`fix_modify {} ionfield off` selects the ion-blind solve.", nout, id);
     return;
   }
@@ -860,8 +978,8 @@ void FixQEqSam::pertype_parameters(char *arg)
   for (int i = 1; i <= nt; i++) if (c3_type[i] != 0.0 || c4_type[i] != 0.0) {
     lr_quartic = 1;
     if (comm->me == 0)
-      utils::logmesg(lmp, "samqeq: IP-STAIRCASE on-site anharmonicity active — per-type c3/c4 give a"
-                          "charge-dependent hardness eta_eff(q)=eta+1/2 c3 q+1/6 c4 q^2 via the Picard/ASPC-quartic"
+      utils::logmesg(lmp, "samqeq: IP-STAIRCASE on-site anharmonicity active — per-type c3/c4 give a "
+                          "charge-dependent hardness eta_eff(q)=eta+1/2 c3 q+1/6 c4 q^2 via the Picard/ASPC-quartic "
                           "solve; oxidation state floats with q0+field from ONE element param set\n");
     break;
   }
@@ -956,7 +1074,7 @@ void FixQEqSam::build_slater_tables()
       slater_tabs[idx].build(is2s[ti] != 0, is2s[tj] != 0, gamma[ti], gamma[tj], swb);
     }
   if (comm->me == 0)
-    utils::logmesg(lmp, "samqeq: Slater-overlap J(r) tables built ({} unique type pairs, {} pts each,"
+    utils::logmesg(lmp, "samqeq: Slater-overlap J(r) tables built ({} unique type pairs, {} pts each, "
                         "r in [{:.3g},{:.3g}])\n", npairs, slater_tabs.empty() ? 0 : slater_tabs[0].npts,
                         slater_tabs.empty() ? 0.0 : slater_tabs[0].rmin, swb);
 }
@@ -1010,7 +1128,8 @@ double FixQEqSam::taper_poly(double r)
 
 void FixQEqSam::compute_H()
 {
-  if (lr_alpha <= 0.0) { FixQEqBaseSam::compute_H(); return; }
+  // both branches stamp the CSR H with the neighbor build and the step it was assembled for (see ensure_host_H)
+  if (lr_alpha <= 0.0) { FixQEqBaseSam::compute_H(); h_build_ncalls = neighbor->ncalls; h_build_step = update->ntimestep; return; }
   ensure_matrix_capacity();
 
   int *mask = atom->mask, *type = atom->type;
@@ -1091,6 +1210,7 @@ void FixQEqSam::compute_H()
     H.numnbrs[i] = m_fill - H.firstnbr[i];
   }
   if (m_fill >= H.m) error->all(FLERR,"samqeq: H overflow (lr) m_fill={} H.m={}", m_fill, H.m);
+  h_build_ncalls = neighbor->ncalls; h_build_step = update->ntimestep;   // build stamp (see ensure_host_H)
 }
 
 /* ====================== RESPONSE KERNEL =============*/
@@ -1231,6 +1351,7 @@ void FixQEqSam::init_matvec()
     Xdia_inv[i] = (X_diag[i] != 0.0) ? 1.0/X_diag[i] : 1.0;
     double reffield = d[i] - (eta[type[i]] + (onsite_extra ? onsite_extra[i] : 0.0) + lr_ridge) * q0[type[i]];   // subtract the ridged on-site diagonal
     b_s[i]    = -(chi_b(i) + reffield);
+    if (lr_quartic && anh_q0shift && anh_rhs) b_s[i] += anh_rhs[i];   // Picard q0 shift (compute_saddle_onsite above)
     if (ionfield_flag) b_s[i] -= fixq_field[i];   // ionfield: fixed-charge field -> RHS only (sources not
                                                    //   in the operator: add_reciprocal sources group charges, compute_H
                                                    //   is core-core) => counted exactly once. Same sign/guard as
@@ -1274,8 +1395,8 @@ void FixQEqSam::calculate_Q()
   }
   int badall = 0; MPI_Allreduce(&bad, &badall, 1, MPI_INT, MPI_MAX, world);
   if (badall)
-    error->all(FLERR, "samqeq: charge solve diverged (non-finite or |q-q0|>{} e) at step {} — system"
-                      "under-constrained (e.g. truncated Coulomb in a dense polar phase); check"
+    error->all(FLERR, "samqeq: charge solve diverged (non-finite or |q-q0|>{} e) at step {} — system "
+                      "under-constrained (e.g. truncated Coulomb in a dense polar phase); check "
                       "params / cutoff / kspace", QMAX, update->ntimestep);
 
   for (int i = 0; i < NN; i++) {
@@ -1481,6 +1602,19 @@ void FixQEqSam::compute_saddle_onsite()
     const double base = eta[t];
     if (base + e < quartic_etafloor) e = quartic_etafloor - base;   // floor on the TOTAL diagonal
     deta_anh[i] = e;
+  }
+  // Picard q0 shift on the saddle route (fix_qeq_sam.h at anh_q0shift): the charge rows act on x = q - q0 (reffield removes
+  // the full on-site diagonal times q0, onsite_extra included), so a q0 != 0 anharmonic row gets the same D*x_k - E'(q_k)
+  // shift as the plain path (D = deta_anh, floored). Added to b_s in init_matvec.
+  if (anh_q0shift) {
+    anh_rhs_alloc();
+    for (int i = 0; i < nlocal; i++) {
+      anh_rhs[i] = 0.0;
+      if (!(mask[i] & groupbit) || !anh_q0shift_row(type[i], mask[i])) continue;
+      const int t = type[i];
+      double f = 0.0; anh_force_add(f, qa[i], t, mask[i] & quartic_groupbit, quartic_gate[i]);   // f = -E'(q_k)
+      anh_rhs[i] = deta_anh[i]*(qa[i] - q0[t]) + f;
+    }
   }
   onsite_extra = deta_anh;
 }

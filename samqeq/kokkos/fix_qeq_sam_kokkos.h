@@ -231,6 +231,10 @@ class FixQEqSamKokkos : public FixQEqSam {
      erf/erfc build over every pair). Skipping compute_H while any host reader remains would build the
      field from the PREVIOUS step's matrix.*/
   void coulomb_field(double *x, double *out, bool project = true) override;
+  /* the full projected solve operator P((eta + ridge)·x + H·x + recip·x) for the host-side consumers outside qeq_cg
+     (estimate_lambda_min's Lanczos, the ASPC-DIAG committed residual). Same predicate as coulomb_field: the host
+     qeq_matvec while the host H is being built, the device matvec (with_diag) once the device solve is engaged. */
+  void lanczos_matvec(double *x, double *out) override;
 
   bool host_H_needed() override {
     return !(device_solve_on && device_qcg_eligible() && s8_done && s9_done
@@ -526,8 +530,10 @@ class FixQEqSamKokkos : public FixQEqSam {
   // (J_shield − (1−erfc(αr))/r), which is the host's H only while lr_alpha > 0; at lr_alpha == 0 the host
   // uses the tapered base compute_H. lr_ewald=2 decks always carry α = the PPPM g_ewald,
   // so this excludes nothing real -- it just makes the assumption explicit rather than latent.
+  // `solver minres` (use_minres) is host-only: qeq_solve_minres never reaches qeq_cg and multiplies the host CSR H,
+  // so the deck must keep the host H built (host_H_needed() true).
   bool device_qcg_eligible() const {
-    return lr_ewald == 2 && list_full && nmol_ > 0 && molinv
+    return lr_ewald == 2 && list_full && nmol_ > 0 && molinv && !use_minres
            && !lr_quartic && !ridge_local && !lr_nrecip && device_kernel_ok() && lr_alpha > 0.0;
   }
 

@@ -315,10 +315,10 @@ int FixQEqSam::saddle_fallback(double *b, double *x)
 {
   if (precond_mode == 1 || acks2_use_minres) return -1;   // ILU already in use, or MINRES (unpreconditioned): nothing to escalate to
   if (comm->me == 0)
-    error->warning(FLERR, "samqeq: ACKS2 saddle BiCGStab exhausted its iterations at step {} (rel-residual"
+    error->warning(FLERR, "samqeq: ACKS2 saddle BiCGStab exhausted its iterations at step {} (rel-residual "
                           "{:.2e} under the diagonal preconditioner) -- retrying ONCE with `precond ilu`"
-                          "(block-ILUT, centralized) and keeping it for the rest of this run. A preconditioner"
-                          "changes the iteration count, never the answer. If this repeats, put `fix_modify {}"
+                          "(block-ILUT, centralized) and keeping it for the rest of this run. A preconditioner "
+                          "changes the iteration count, never the answer. If this repeats, put `fix_modify {} "
                           "precond ilu` in the deck; if the retry fails too, the run stops (see the next error)",
                    update->ntimestep, acks2_relresid, id);
   precond_mode = 1; ilu_valid = 0;

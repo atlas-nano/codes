@@ -50,6 +50,7 @@ class PPPMSamqeqKokkos : public PPPMKokkos<DeviceType>, public SamqeqKspace {
   typedef DeviceType device_type;
   typedef ArrayTypes<DeviceType> AT;
   typedef FFTArrayTypes<DeviceType> FFT_AT;
+  int op_self_eatom_warned = 0;   // one-shot warning (kk per-atom energy not corrected)
 
   PPPMSamqeqKokkos(class LAMMPS *);
   ~PPPMSamqeqKokkos() override;
@@ -57,6 +58,7 @@ class PPPMSamqeqKokkos : public PPPMKokkos<DeviceType>, public SamqeqKspace {
   // run-boundary re-arm, device mirror of PPPMSamqeq::init() (pppm_samqeq.cpp) -- see that file's
   // comment for the mechanism (see .cpp).
   void init() override;
+  bool resize_mesh_from_charges(int *od, int *nd) override;   // see samqeq_kspace.h
 
   // PPPMSamqeqKokkos subclasses PPPMKokkos directly (not PPPMSamqeq), so it does NOT inherit
   // PPPMSamqeq::compute()'s qsum_qsq(0) refresh; without this override E_long is wrong under fluctuating

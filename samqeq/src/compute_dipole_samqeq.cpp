@@ -161,7 +161,7 @@ void ComputeDipoleSamQEq::compute_vector()
       if (!warned_nonneutral_mol && fabs(molq_all[m]) > 1.0e-6) {
         warned_nonneutral_mol = true;
         if (comm->me == 0)
-          error->warning(FLERR, "compute dipole/samqeq: molecule {} has net charge {:.6f}; its dipole is"
+          error->warning(FLERR, "compute dipole/samqeq: molecule {} has net charge {:.6f}; its dipole is "
                          "origin-dependent", (long) m, molq_all[m]);
       }
     }

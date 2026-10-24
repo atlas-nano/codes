@@ -61,6 +61,9 @@ class PairCoulShieldIntra : public Pair {
   double shield_lambda_get() const { return shield_lambda; }  // channel 3: PQEq lambda
   int    shield_is2s_get(int t) const { return is2s ? is2s[t] : 0; }   // channel 4: Slater 2s/1s per type
   int    shield_intra_only() const { return intra_only; }     // scope (intra|all), for the error message
+  // channel 6: the per-type-pair kernel parameter this style integrates (after init_one mixing). Meaningful only
+  // for pairs this sub-style is ASSIGNED to; the caller checks the hybrid map first.
+  double shield_gamma_get(int i, int j) const { return gamma ? gamma[i][j] : 0.0; }
   // Per-type-pair PQEq Gaussian radius override, pushed by fix qeq/sam (single source of truth)
   void   shield_rpair_set(int i, int j, double r);
   double shield_rpair_get(int i, int j) const { return shield_rpair ? shield_rpair[i][j] : 0.0; }
