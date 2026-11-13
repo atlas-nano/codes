@@ -1,0 +1,511 @@
+{
+  "package_version": "0.3.0",
+  "note": "Manifest excludes itself, caches, build/dist products and private implementation validation directories.",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "28d805ca049ad736a7773c25cf28a26c79a5c593ba381eb05b8b86f399d406a0",
+      "bytes": 129
+    },
+    {
+      "path": "MANIFEST.in",
+      "sha256": "ca08b580b5084a21df5c55e68cfb17538a6b8a4e70609eab19ff971b0d66d538",
+      "bytes": 302
+    },
+    {
+      "path": "README.md",
+      "sha256": "240678b6d92a20148d99dcd53ccd011e87ffcd87b03aa3c68b1a4f694dcf5a32",
+      "bytes": 13319
+    },
+    {
+      "path": "docs/PAPER_REPRODUCTION.md",
+      "sha256": "4a9664984e8974f951eae5847489588cce7d44277c7e584fd0a134c99c4b986c",
+      "bytes": 2937
+    },
+    {
+      "path": "docs/PARAMETERS.md",
+      "sha256": "87aac02701b9f944a2cbcd7bafee47ecc0ce10f3b69b314ee1b33d49a8e112f9",
+      "bytes": 3105
+    },
+    {
+      "path": "docs/SCIENTIFIC_CONVENTIONS.md",
+      "sha256": "66200584c01d4ddd94d33089fd484a6a85e03eb6174dc95264782d9432fa7e57",
+      "bytes": 6783
+    },
+    {
+      "path": "examples/pdms_11mon_100chain.yaml",
+      "sha256": "9e28a3e2ec87b208270fe8c25254fa1220e84d261f60faea5f0f489319438726",
+      "bytes": 1972
+    },
+    {
+      "path": "examples/pdms_candidate.json",
+      "sha256": "ca3a6d0f92ee0957df79c7eb4b1195e2cf3137460d09977169db4cf1f3aeac11",
+      "bytes": 2514
+    },
+    {
+      "path": "examples/pdms_repeat.smi",
+      "sha256": "44791ad6df9a4d3b7524ed6026516c2c44bf73dfdd28d7142cbdfb0abb20a603",
+      "bytes": 22
+    },
+    {
+      "path": "examples/pvdf_candidate.json",
+      "sha256": "f9bcc4d84af89fc8ec107d3fe14a68625e18eb9bfc2edc0859e3061d85307845",
+      "bytes": 2513
+    },
+    {
+      "path": "examples/pvdf_repeat.smi",
+      "sha256": "ed996ea9ef98ef0680a063cffb527b65d83a6c6736e4c795a97921a1f6cd500c",
+      "bytes": 19
+    },
+    {
+      "path": "provenance/advanced_source_snapshot.json",
+      "sha256": "637fdaf90c386eb859f6566b761bf80c1ea0e7851347870cbc6ddace7b0d9c63",
+      "bytes": 2313
+    },
+    {
+      "path": "provenance/chemistry_sources.json",
+      "sha256": "6ea6fd3a04fb4d5050922687039aaddddaaa1188027e071744f48757acd8aac2",
+      "bytes": 915
+    },
+    {
+      "path": "provenance/lammps_run0_validation.json",
+      "sha256": "98c0ddda3a711931ff08625c892f3d08e536076503206be2c51c6319c8bb8ab4",
+      "bytes": 1903
+    },
+    {
+      "path": "provenance/rdkit_graph_checks.json",
+      "sha256": "53581354fae5e5f85893c590aa26cc39b04aa60a7b5c2c340d991e63dbc7b839",
+      "bytes": 1221
+    },
+    {
+      "path": "provenance/validation_report.json",
+      "sha256": "19058be654eb9de9ecda5dfe015a5c13a090a41cc82a2c8028eb0a628a5df92d",
+      "bytes": 5173
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "6ab84cad1234aed0895c77b42f9b2adbe7c2c27fe697da5906bfcf6f135dcf22",
+      "bytes": 821
+    },
+    {
+      "path": "src/dmax2/__init__.py",
+      "sha256": "9948cfe5e98a4bcc5a140dcbf61cbb4084f3dde081981eab8b7d69aa3ed9e6f3",
+      "bytes": 188
+    },
+    {
+      "path": "src/dmax2/analysis/__init__.py",
+      "sha256": "e1e5342ff7aba50c17290b753b70df6c38d3ca2c88a960fd749875e6ed6a53c2",
+      "bytes": 30
+    },
+    {
+      "path": "src/dmax2/analysis/convergence.py",
+      "sha256": "2475e73eed618d3919f81a98c197be0a2b5f459e4dc7f28c7d4303bd8656c402",
+      "bytes": 25077
+    },
+    {
+      "path": "src/dmax2/analysis/dma.py",
+      "sha256": "bc94e4b9df377a4f7c2e92e66a8a2c55b85cb8c58b178ff11cc8d5a15ca77367",
+      "bytes": 28027
+    },
+    {
+      "path": "src/dmax2/analysis/equilibration.py",
+      "sha256": "e6c7d1a6e6f2a6a04a50d50882397f40409ff0e5e01d599325a0bf3f1d51a618",
+      "bytes": 9150
+    },
+    {
+      "path": "src/dmax2/analysis/error_analysis.py",
+      "sha256": "3e2579d1a4219ca08f9970053e8628bebe867825114a5bbd9ab65ce9f0191741",
+      "bytes": 12905
+    },
+    {
+      "path": "src/dmax2/analysis/fourier.py",
+      "sha256": "68ae7a80325ef04709fd5ba168ef94017ab5d3d0553103f9f71d27f2a193e979",
+      "bytes": 16160
+    },
+    {
+      "path": "src/dmax2/analysis/glass_transition.py",
+      "sha256": "4a083ce064d0ad6b29dbdb018fe6945263e34cf75c82b9cb1a54fe0186b40118",
+      "bytes": 48010
+    },
+    {
+      "path": "src/dmax2/analysis/master_curve.py",
+      "sha256": "7f05375fb21bca8f521aa7e1be48b852bfcbc26dc0da1f05c3cd9848e66b2e8c",
+      "bytes": 41428
+    },
+    {
+      "path": "src/dmax2/atomate2_compat.py",
+      "sha256": "00240c710dbb7aad7146ebf61edb77a547633f0bc6ec6d0d8dd97fa14d253877",
+      "bytes": 1675
+    },
+    {
+      "path": "src/dmax2/cli.py",
+      "sha256": "ab248dc9fa3f6d5bed81b6b941fac38f0ef31cf5705add829060a4b348abdd23",
+      "bytes": 22552
+    },
+    {
+      "path": "src/dmax2/config.py",
+      "sha256": "9a4c0a54cee85f2470c150121ad399e90b079b4e8084062691c42bd8652b2830",
+      "bytes": 10338
+    },
+    {
+      "path": "src/dmax2/forcefields.py",
+      "sha256": "e5e0528c69f715a6539c8f24f91cab57aa26e1f2ca1925be0a682b4f06013727",
+      "bytes": 2860
+    },
+    {
+      "path": "src/dmax2/lammps/__init__.py",
+      "sha256": "7e273f24e9e0bdc27c791be73ceb1a143851015675abeb4e7c6ac8fa9a082a52",
+      "bytes": 871
+    },
+    {
+      "path": "src/dmax2/lammps/inputs.py",
+      "sha256": "c32074b2e15f3d91e677ede35dd048aa80c5e6189ca103783c8c06be252d90b6",
+      "bytes": 85861
+    },
+    {
+      "path": "src/dmax2/polymer_properties.py",
+      "sha256": "48e94169a92a7329b3ec5ba7df446f75fbc16c8ceae245ea0e2785209378ebc5",
+      "bytes": 2956
+    },
+    {
+      "path": "src/dmax2/publication/__init__.py",
+      "sha256": "ef1999e8c7fc3e535de5ca7d5253e3c41fbd33932020e453224ce0c0c5e1987a",
+      "bytes": 86
+    },
+    {
+      "path": "src/dmax2/publication/analysis.py",
+      "sha256": "36dff0b898ca78928363be69d7cfb2f46ae6b1141ae4d969db500b7f30bdb664",
+      "bytes": 15779
+    },
+    {
+      "path": "src/dmax2/publication/assets/__init__.py",
+      "sha256": "86a82eab355078cee9b0ea7b8d6304db699af8bb88f314d81bdb996a78509c06",
+      "bytes": 66
+    },
+    {
+      "path": "src/dmax2/publication/assets/pdms.py",
+      "sha256": "adc137fd59ecdac4d682f7dd0cc2e2854905dc30feedd8c8be7a06aef91c8bd2",
+      "bytes": 29717
+    },
+    {
+      "path": "src/dmax2/publication/assets/pvdf.py",
+      "sha256": "d5d463dd2124ea5f06a4fb3e23d589f60e1a1a9bf98e964b70240fbfcdbffa0e",
+      "bytes": 12331
+    },
+    {
+      "path": "src/dmax2/publication/build.py",
+      "sha256": "8e4ff39d837278766b7dcb94f573819c6483630ad11035af9f6a66df9ac4ce52",
+      "bytes": 17347
+    },
+    {
+      "path": "src/dmax2/publication/cli.py",
+      "sha256": "0a207cc3a818c2c528cdabc4b6d646e301bc1cc6dd18d05252e4a2f7ee7e976c",
+      "bytes": 13323
+    },
+    {
+      "path": "src/dmax2/publication/execution.py",
+      "sha256": "601c32b17089c2392e3ee5efaee1807e8094cac75fd115a2ef4dbbd29499afcf",
+      "bytes": 9237
+    },
+    {
+      "path": "src/dmax2/publication/paper.py",
+      "sha256": "d8d989136d234c94f39b9957b527ae3a52389402dfac36745cc15a747c3a0404",
+      "bytes": 2372
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/README.md",
+      "sha256": "ec99b6f2d54935681879d6673bc3541473055dc490251c1214c9693739fbb0ac",
+      "bytes": 5878
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/manifest.json",
+      "sha256": "768a9f2e852ef39cf9a89ee5edafb6cf83b033fb633b686b54b0f476f4cdfd46",
+      "bytes": 6655
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/reproduce_aux_figures.py",
+      "sha256": "563bac9e9d7bcb9d27ae2a6ac3cf7b92b36a0f59b827b84b9d2db0a5477b1c7f",
+      "bytes": 7325
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/reproduce_figures.py",
+      "sha256": "cdb8e47564da4a97c272f4faad35a0a9945181b33830ec946bec777e94ed85bd",
+      "bytes": 33753
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/source_manifest.json",
+      "sha256": "83dfde078010ad08bfc605449718b7868c7076dd5cdd3010aef51b7f9d0f84ab",
+      "bytes": 44282
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/Figure11_source_rows.csv",
+      "sha256": "6d79974b58ccf6dbfc0d262d164ee746d440028f7fea4991141a3c99783a5c0c",
+      "bytes": 4504
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/PDMS_shared_clock_counterexample_fits.csv",
+      "sha256": "de7871105b8ca909e5abb1a283c23d97f8b13d0c444dbd2e525768463fe6597f",
+      "bytes": 6004
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/PDMS_shared_clock_counterexample_points.csv",
+      "sha256": "f818130e7eb5627b4fd0f986f7009c929852802f66e1619ee6ade7ed9015f365",
+      "bytes": 2921
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/SI_715GHz_premeasurement_final_hold.csv",
+      "sha256": "7aace9bb331104bc4bcefc07bc46ff5e11b805d0332f08334e9e08c75d4f7613",
+      "bytes": 753
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/SI_actual_715GHz_and_parent_acoustic_rows.csv",
+      "sha256": "95f930e1cfe8d290c2088fb1f3787886c1e8246442d2178ea369903b5bb2abae",
+      "bytes": 4042
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/SI_conditional_25GHz_marker_calculations.csv",
+      "sha256": "52160eeb480ee467d87beac364f22ed86901293c81ab20702a6d2b27500d40a5",
+      "bytes": 9071
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/SI_native_frequency_literature.csv",
+      "sha256": "47155cd408c580def5c78ae610ef2cdda3a3638f0dcc960cd1a222c38101bc49",
+      "bytes": 11494
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/amplitude_histories378.csv",
+      "sha256": "a3f385c5fa649440f4a7f764a66b63918ea698c2648fc859898b2747c709d294",
+      "bytes": 364062
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/amplitude_summary126.csv",
+      "sha256": "c93452594e79a69442996388ecf77ba07f2eda811b058ba1d6f5fb1f700623f6",
+      "bytes": 44880
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/amplitude_tangent_warnings.csv",
+      "sha256": "e44212deabbcb0771e47185d97331cf3f1f0df323c9e327fd98f9806bd457840",
+      "bytes": 2514
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/architecture_legacy_context.csv",
+      "sha256": "73d6c29571e2b0a2b7cca44515361f74b61f84b5ac5430cdde6693f244edce0e",
+      "bytes": 137494
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/architecture_modern63.csv",
+      "sha256": "46d84a644ad4094657db645f9ffecc32f8d6cc2b9ed7b2e881da7de39bfac2fd",
+      "bytes": 66801
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/fig07_architecture_state_source_points20.csv",
+      "sha256": "af0009d13ca482b72e6dc33bab95db42b715429f12efe7f8a180b0561d7ab52e",
+      "bytes": 5577
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/fig07_architecture_state_summary8.csv",
+      "sha256": "769925c11603b477a22447551da85265631ce351a29cd519ea163c6c73dc12e3",
+      "bytes": 928
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/historical_anchor_sensitivity.csv",
+      "sha256": "a548e69388364604f70cd5f5766e0a236e2f056211c476674b17e8a1e741e2d7",
+      "bytes": 10297
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/historical_density_anchored_wlf_sensitivity.csv",
+      "sha256": "35bdefd83a840eb3eb3944001380f24995624005c2ae8e03d16c21fbc1ed5ba2",
+      "bytes": 2542
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/historical_figure_s1_equilibrated_densities.csv",
+      "sha256": "de78c5046219bd019d1ed545852d76afa456da728fce5693c6d41e3e87f4440b",
+      "bytes": 602
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/historical_pdms_peak_status.csv",
+      "sha256": "a3bf84440eb5872b335c3cb689211da5f7183074ae4303ea15d106071732809a",
+      "bytes": 10716
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/historical_table_s3_density_breakpoint_summary.csv",
+      "sha256": "4b6f0ce6926d6d25b8dee649edb2ffd0a778f800f4cde90244ee6b4759775264",
+      "bytes": 1317
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/logging_metrics.csv",
+      "sha256": "4d08db80a238117b4f00806d5ca47c6d7ba871c6d5692afc9cd04191bdddf029",
+      "bytes": 29469
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/native25_phase_summary.csv",
+      "sha256": "f28e519d8f4ddbc6a97b6f068b684cceb8f3f31914175b95a0cdece35bd8d53f",
+      "bytes": 4664
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/papergrid_complex432.csv",
+      "sha256": "68d5ab8eb52f26f33d4991c2d87838d6bd8746ebf097e2f890cf153c4b09b681",
+      "bytes": 451872
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/papergrid_complex_tensor432.csv",
+      "sha256": "50ddc1125f7b953eb3a0ea2a446995d8452b0ba63c930c3be3cdd9c1963d1547",
+      "bytes": 298007
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/papergrid_means144.csv",
+      "sha256": "3a9b3e8ee07392f4bd46efb51e5fc2b756ff1de76bc503ae06ae7383459bb23d",
+      "bytes": 16875
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/papergrid_three_packing_statistics144.csv",
+      "sha256": "61d0aa8da3e4a1024866dcb47f4ddb4785f1e50428db40f508c1757bf0c45731",
+      "bytes": 25146
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/preparation_geometry.csv",
+      "sha256": "b51b072144aabb74d47e8b3e93f01519708c112f85793a931773e2afa3fcfe87",
+      "bytes": 1118716
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/preparation_thermo_50ps.csv",
+      "sha256": "a29c5c85acff19db1c0ba63a299315e1961f1da383141a63e062298ba4a77bd8",
+      "bytes": 788160
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/repeatability_by_architecture.csv",
+      "sha256": "da08c73d18d7d50eae34e5e1b077791659d19ba34f951eee683895e4d364e3ac",
+      "bytes": 1741
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/runtime_coverage.csv",
+      "sha256": "b50aa177872a6886a0ce6d55d25f1d02176d3c598fd6950f411794304f0a309f",
+      "bytes": 1580
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/runtime_prefix25GHz.csv",
+      "sha256": "2c18a521d80ed7c20332fd8824b039bb88180d3e209b9a2686ff627ffbdeb879",
+      "bytes": 994664
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/sampling_pilot6.csv",
+      "sha256": "18e37ae719c56a0edcd68e998a6f7c6f539203512105fa15301b7614bed31b15",
+      "bytes": 876
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/table_S1_newgrid_peak_status24.csv",
+      "sha256": "89082af48214cf65d7d68dc5e2a9a6d70a3ef7218f8522c213b7a48ec573ba1d",
+      "bytes": 5984
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/temperature_history155.csv",
+      "sha256": "e41bb3cc8908263e2beb3fa6ab556c9f83cfd0517c0f2bea91ea5e5e7365538c",
+      "bytes": 66503
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/temperature_sampled_extrema_not_transition_assignments.csv",
+      "sha256": "5fcb005c8f6eb2b3470aedd85f308b5d6a441ccfef06af2b7fd8196016d3525e",
+      "bytes": 796
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/temperature_summary.csv",
+      "sha256": "3ffda38fa7a5d0deea009ebfeec5281c971588372a28715f2761939bea923301",
+      "bytes": 16239
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/tts_fits.csv",
+      "sha256": "96dbe1d64caaf980a7c7acc2a4fd812ff3a2c8db25dab898a0cba69ca07d4996",
+      "bytes": 45660
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/sources/tts_intervals.csv",
+      "sha256": "fb178d234647ce4cf3e378087da3b7e7369adb516a52fc441253b9c0607c579a",
+      "bytes": 7327
+    },
+    {
+      "path": "src/dmax2/publication/paper_data/validation_report.json",
+      "sha256": "e2c0fbd13ca6dfc99733c61c7b730f3499d2c62aea23591a068805ffd4068678",
+      "bytes": 2863
+    },
+    {
+      "path": "src/dmax2/publication/plots.py",
+      "sha256": "a37a4f873178a5f6a1347b3085a02e0ab82cc0bdd0886750142a85e0fd5a3321",
+      "bytes": 3287
+    },
+    {
+      "path": "src/dmax2/publication/preparation.py",
+      "sha256": "824ef51a910e0c0a9e098c91022c8b6dda680c2e036b9879530a0845a393d1ed",
+      "bytes": 9263
+    },
+    {
+      "path": "src/dmax2/publication/protocol.py",
+      "sha256": "59c933fb975f53dc4a3da1879a9b36730ebfb740cb97b45259aa44dcd59a9ab0",
+      "bytes": 21526
+    },
+    {
+      "path": "src/dmax2/publication/sampling.py",
+      "sha256": "37020dd5185f522a3310579af7cde2292d62806d06765993c2af828d38d1d2c6",
+      "bytes": 4135
+    },
+    {
+      "path": "src/dmax2/publication/tts.py",
+      "sha256": "1041f82a2bf693a4565657d93805a8fc867547822f58986842f4b349789f1ab1",
+      "bytes": 8694
+    },
+    {
+      "path": "src/dmax2/schemas.py",
+      "sha256": "27ed6c4fb345b7cd5f862b6c9605e53eb53b716bdc1638a9fe97059f59c283cb",
+      "bytes": 1009
+    },
+    {
+      "path": "src/dmax2/structures.py",
+      "sha256": "5b5ca34728c7636032548d670f2f258636a40ad8886ffb4ba09c001562de25d4",
+      "bytes": 3968
+    },
+    {
+      "path": "src/dmax2/workflow.py",
+      "sha256": "326f84b0c8ecd81cca7d101c768be0b8ea47095047e38c980881e4211a78e933",
+      "bytes": 14883
+    },
+    {
+      "path": "tests/fixtures/tiny_pdms.data",
+      "sha256": "0a08643310d17c153184faaa24800ae27e71f4c042e0fdb7a23b4795b71e8afa",
+      "bytes": 30381
+    },
+    {
+      "path": "tests/fixtures/tiny_pvdf.data",
+      "sha256": "d576620a69bbf7031f9777dd97f0321822a8254af47f20bfc94542a88690668b",
+      "bytes": 15795
+    },
+    {
+      "path": "tests/test_fourier_projection.py",
+      "sha256": "fdb117d006e444b7fb85a2fccf3641f76530a3da9572903c25678b7b0ff592b4",
+      "bytes": 12152
+    },
+    {
+      "path": "tests/test_master_curve_peak_censoring.py",
+      "sha256": "b60830dc156619a3d73498b04d565be22c9c7041b3d9d059b4d879ccb557c9fb",
+      "bytes": 4178
+    },
+    {
+      "path": "tests/test_pdms_11mon_100chain_pipeline.py",
+      "sha256": "42941c57400006c5a9ba6ea369abd7eb6af036ef7a5388aba4d64a01a1fda573",
+      "bytes": 1637
+    },
+    {
+      "path": "tests/test_publication_diagnostics.py",
+      "sha256": "7c14172426d19f411e7a5432952da6472bb38f474ad8d8722ce6d5480db84d02",
+      "bytes": 7347
+    },
+    {
+      "path": "tests/test_publication_workflow.py",
+      "sha256": "f067cfcbcdca2db0c4b806249e44165456112c930df73621d16abb379327e211",
+      "bytes": 8766
+    },
+    {
+      "path": "tests/test_tension_strain_writer.py",
+      "sha256": "9a0d16b80757381c3d4571ab8af68587f01ee2d9f3a6e55fc89b1f8fd78950e0",
+      "bytes": 2995
+    }
+  ]
+}

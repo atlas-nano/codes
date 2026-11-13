@@ -1,0 +1,178 @@
+{
+  "schema": "dmax-portable-paper-bundle-v1",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "ec99b6f2d54935681879d6673bc3541473055dc490251c1214c9693739fbb0ac"
+    },
+    {
+      "path": "reproduce_aux_figures.py",
+      "sha256": "563bac9e9d7bcb9d27ae2a6ac3cf7b92b36a0f59b827b84b9d2db0a5477b1c7f"
+    },
+    {
+      "path": "reproduce_figures.py",
+      "sha256": "cdb8e47564da4a97c272f4faad35a0a9945181b33830ec946bec777e94ed85bd"
+    },
+    {
+      "path": "source_manifest.json",
+      "sha256": "83dfde078010ad08bfc605449718b7868c7076dd5cdd3010aef51b7f9d0f84ab"
+    },
+    {
+      "path": "sources/Figure11_source_rows.csv",
+      "sha256": "6d79974b58ccf6dbfc0d262d164ee746d440028f7fea4991141a3c99783a5c0c"
+    },
+    {
+      "path": "sources/PDMS_shared_clock_counterexample_fits.csv",
+      "sha256": "de7871105b8ca909e5abb1a283c23d97f8b13d0c444dbd2e525768463fe6597f"
+    },
+    {
+      "path": "sources/PDMS_shared_clock_counterexample_points.csv",
+      "sha256": "f818130e7eb5627b4fd0f986f7009c929852802f66e1619ee6ade7ed9015f365"
+    },
+    {
+      "path": "sources/SI_715GHz_premeasurement_final_hold.csv",
+      "sha256": "7aace9bb331104bc4bcefc07bc46ff5e11b805d0332f08334e9e08c75d4f7613"
+    },
+    {
+      "path": "sources/SI_actual_715GHz_and_parent_acoustic_rows.csv",
+      "sha256": "95f930e1cfe8d290c2088fb1f3787886c1e8246442d2178ea369903b5bb2abae"
+    },
+    {
+      "path": "sources/SI_conditional_25GHz_marker_calculations.csv",
+      "sha256": "52160eeb480ee467d87beac364f22ed86901293c81ab20702a6d2b27500d40a5"
+    },
+    {
+      "path": "sources/SI_native_frequency_literature.csv",
+      "sha256": "47155cd408c580def5c78ae610ef2cdda3a3638f0dcc960cd1a222c38101bc49"
+    },
+    {
+      "path": "sources/amplitude_histories378.csv",
+      "sha256": "a3f385c5fa649440f4a7f764a66b63918ea698c2648fc859898b2747c709d294"
+    },
+    {
+      "path": "sources/amplitude_summary126.csv",
+      "sha256": "c93452594e79a69442996388ecf77ba07f2eda811b058ba1d6f5fb1f700623f6"
+    },
+    {
+      "path": "sources/amplitude_tangent_warnings.csv",
+      "sha256": "e44212deabbcb0771e47185d97331cf3f1f0df323c9e327fd98f9806bd457840"
+    },
+    {
+      "path": "sources/architecture_legacy_context.csv",
+      "sha256": "73d6c29571e2b0a2b7cca44515361f74b61f84b5ac5430cdde6693f244edce0e"
+    },
+    {
+      "path": "sources/architecture_modern63.csv",
+      "sha256": "46d84a644ad4094657db645f9ffecc32f8d6cc2b9ed7b2e881da7de39bfac2fd"
+    },
+    {
+      "path": "sources/fig07_architecture_state_source_points20.csv",
+      "sha256": "af0009d13ca482b72e6dc33bab95db42b715429f12efe7f8a180b0561d7ab52e"
+    },
+    {
+      "path": "sources/fig07_architecture_state_summary8.csv",
+      "sha256": "769925c11603b477a22447551da85265631ce351a29cd519ea163c6c73dc12e3"
+    },
+    {
+      "path": "sources/historical_anchor_sensitivity.csv",
+      "sha256": "a548e69388364604f70cd5f5766e0a236e2f056211c476674b17e8a1e741e2d7"
+    },
+    {
+      "path": "sources/historical_density_anchored_wlf_sensitivity.csv",
+      "sha256": "35bdefd83a840eb3eb3944001380f24995624005c2ae8e03d16c21fbc1ed5ba2"
+    },
+    {
+      "path": "sources/historical_figure_s1_equilibrated_densities.csv",
+      "sha256": "de78c5046219bd019d1ed545852d76afa456da728fce5693c6d41e3e87f4440b"
+    },
+    {
+      "path": "sources/historical_pdms_peak_status.csv",
+      "sha256": "a3bf84440eb5872b335c3cb689211da5f7183074ae4303ea15d106071732809a"
+    },
+    {
+      "path": "sources/historical_table_s3_density_breakpoint_summary.csv",
+      "sha256": "4b6f0ce6926d6d25b8dee649edb2ffd0a778f800f4cde90244ee6b4759775264"
+    },
+    {
+      "path": "sources/logging_metrics.csv",
+      "sha256": "4d08db80a238117b4f00806d5ca47c6d7ba871c6d5692afc9cd04191bdddf029"
+    },
+    {
+      "path": "sources/native25_phase_summary.csv",
+      "sha256": "f28e519d8f4ddbc6a97b6f068b684cceb8f3f31914175b95a0cdece35bd8d53f"
+    },
+    {
+      "path": "sources/papergrid_complex432.csv",
+      "sha256": "68d5ab8eb52f26f33d4991c2d87838d6bd8746ebf097e2f890cf153c4b09b681"
+    },
+    {
+      "path": "sources/papergrid_complex_tensor432.csv",
+      "sha256": "50ddc1125f7b953eb3a0ea2a446995d8452b0ba63c930c3be3cdd9c1963d1547"
+    },
+    {
+      "path": "sources/papergrid_means144.csv",
+      "sha256": "3a9b3e8ee07392f4bd46efb51e5fc2b756ff1de76bc503ae06ae7383459bb23d"
+    },
+    {
+      "path": "sources/papergrid_three_packing_statistics144.csv",
+      "sha256": "61d0aa8da3e4a1024866dcb47f4ddb4785f1e50428db40f508c1757bf0c45731"
+    },
+    {
+      "path": "sources/preparation_geometry.csv",
+      "sha256": "b51b072144aabb74d47e8b3e93f01519708c112f85793a931773e2afa3fcfe87"
+    },
+    {
+      "path": "sources/preparation_thermo_50ps.csv",
+      "sha256": "a29c5c85acff19db1c0ba63a299315e1961f1da383141a63e062298ba4a77bd8"
+    },
+    {
+      "path": "sources/repeatability_by_architecture.csv",
+      "sha256": "da08c73d18d7d50eae34e5e1b077791659d19ba34f951eee683895e4d364e3ac"
+    },
+    {
+      "path": "sources/runtime_coverage.csv",
+      "sha256": "b50aa177872a6886a0ce6d55d25f1d02176d3c598fd6950f411794304f0a309f"
+    },
+    {
+      "path": "sources/runtime_prefix25GHz.csv",
+      "sha256": "2c18a521d80ed7c20332fd8824b039bb88180d3e209b9a2686ff627ffbdeb879"
+    },
+    {
+      "path": "sources/sampling_pilot6.csv",
+      "sha256": "18e37ae719c56a0edcd68e998a6f7c6f539203512105fa15301b7614bed31b15"
+    },
+    {
+      "path": "sources/table_S1_newgrid_peak_status24.csv",
+      "sha256": "89082af48214cf65d7d68dc5e2a9a6d70a3ef7218f8522c213b7a48ec573ba1d"
+    },
+    {
+      "path": "sources/temperature_history155.csv",
+      "sha256": "e41bb3cc8908263e2beb3fa6ab556c9f83cfd0517c0f2bea91ea5e5e7365538c"
+    },
+    {
+      "path": "sources/temperature_sampled_extrema_not_transition_assignments.csv",
+      "sha256": "5fcb005c8f6eb2b3470aedd85f308b5d6a441ccfef06af2b7fd8196016d3525e"
+    },
+    {
+      "path": "sources/temperature_summary.csv",
+      "sha256": "3ffda38fa7a5d0deea009ebfeec5281c971588372a28715f2761939bea923301"
+    },
+    {
+      "path": "sources/tts_fits.csv",
+      "sha256": "96dbe1d64caaf980a7c7acc2a4fd812ff3a2c8db25dab898a0cba69ca07d4996"
+    },
+    {
+      "path": "sources/tts_intervals.csv",
+      "sha256": "fb178d234647ce4cf3e378087da3b7e7369adb516a52fc441253b9c0607c579a"
+    },
+    {
+      "path": "validation_report.json",
+      "sha256": "e2c0fbd13ca6dfc99733c61c7b730f3499d2c62aea23591a068805ffd4068678"
+    }
+  ],
+  "source_table_count": 37,
+  "raw_trajectories_included": false,
+  "MD_replay_complete": false,
+  "figure_reproduction_cli": "python reproduce_figures.py --data EXPORTED_DATA --output FIGURES",
+  "validation": "validation_report.json"
+}

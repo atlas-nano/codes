@@ -1,0 +1,43 @@
+{
+  "RDKit_version": "2020.09.1",
+  "checks": {
+    "[*:1]CC(F)(F)[*:2]": {
+      "polymer": "PVDF",
+      "repeat_smiles": "[*:1]CC(F)(F)[*:2]",
+      "force_field_available": true,
+      "connection_sites": 2
+    },
+    "[*:1]O[Si](C)(C)[*:2]": {
+      "polymer": "PDMS",
+      "repeat_smiles": "[*:1]O[Si](C)(C)[*:2]",
+      "force_field_available": true,
+      "connection_sites": 2
+    },
+    "[*:1]C(F)C(F)[*:2]": {
+      "polymer": "custom",
+      "repeat_smiles": "[*:1]C(F)C(F)[*:2]",
+      "force_field_available": false,
+      "connection_sites": 2
+    },
+    "[*:1]C(F)=C(F)[*:2]": {
+      "polymer": "custom",
+      "repeat_smiles": "[*:1]C(F)=C(F)[*:2]",
+      "force_field_available": false,
+      "connection_sites": 2
+    },
+    "[*:1][13CH2]C(F)(F)[*:2]": {
+      "polymer": "custom",
+      "repeat_smiles": "[*:1][13CH2]C(F)(F)[*:2]",
+      "force_field_available": false,
+      "connection_sites": 2
+    },
+    "[*:1]CO[*:2]": {
+      "polymer": "custom",
+      "repeat_smiles": "[*:1]CO[*:2]",
+      "force_field_available": false,
+      "connection_sites": 2
+    },
+    "missing_attachment_rejected": true
+  },
+  "source_sha256": "8e4ff39d837278766b7dcb94f573819c6483630ad11035af9f6a66df9ac4ce52"
+}

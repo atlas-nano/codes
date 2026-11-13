@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.validation/
+build/
+dist/
+*.egg-info/
+.venv/
+*.lammpstrj
+*.restart
+launcher.log
+driver.log

@@ -1,0 +1,5 @@
+material,architecture,force_field,final_nvt_density_g_cm3,source,revision_use
+PVDF,10 chains x 100 monomers,OPLS-AA,1.453,previously submitted Supplementary Figure S1,alternative-architecture equilibration context only
+PDMS,10 chains x 100 monomers,OPLS-AA,0.993,previously submitted Supplementary Figure S1,force-field equilibration context only
+PDMS,10 chains x 100 monomers,HUANG,0.901,previously submitted Supplementary Figure S1,force-field equilibration context only
+PDMS,10 chains x 100 monomers,DREIDING,1.045,previously submitted Supplementary Figure S1,force-field equilibration context only

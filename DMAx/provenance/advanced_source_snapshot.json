@@ -1,0 +1,27 @@
+{
+  "source_checkout": "codes_fourier/DMAx",
+  "branch": "feature/fourier-projection-validation",
+  "recorded_HEAD": "e9505870916477039aaeb38000780233c4b4f038",
+  "note": "Working tree includes uncommitted source. HEAD alone does not identify the copied implementation; hashes below identify actual read-only sources.",
+  "source_python_files": {
+    "src/dmax2/cli.py": "ab248dc9fa3f6d5bed81b6b941fac38f0ef31cf5705add829060a4b348abdd23",
+    "src/dmax2/schemas.py": "27ed6c4fb345b7cd5f862b6c9605e53eb53b716bdc1638a9fe97059f59c283cb",
+    "src/dmax2/__init__.py": "925edbe5b4d4c2fe7f3479762d9df28b6e591fae53fec00cfe2a9b609056bc5b",
+    "src/dmax2/atomate2_compat.py": "00240c710dbb7aad7146ebf61edb77a547633f0bc6ec6d0d8dd97fa14d253877",
+    "src/dmax2/forcefields.py": "e5e0528c69f715a6539c8f24f91cab57aa26e1f2ca1925be0a682b4f06013727",
+    "src/dmax2/polymer_properties.py": "48e94169a92a7329b3ec5ba7df446f75fbc16c8ceae245ea0e2785209378ebc5",
+    "src/dmax2/workflow.py": "326f84b0c8ecd81cca7d101c768be0b8ea47095047e38c980881e4211a78e933",
+    "src/dmax2/config.py": "9a4c0a54cee85f2470c150121ad399e90b079b4e8084062691c42bd8652b2830",
+    "src/dmax2/structures.py": "5b5ca34728c7636032548d670f2f258636a40ad8886ffb4ba09c001562de25d4",
+    "src/dmax2/lammps/__init__.py": "7e273f24e9e0bdc27c791be73ceb1a143851015675abeb4e7c6ac8fa9a082a52",
+    "src/dmax2/lammps/inputs.py": "c32074b2e15f3d91e677ede35dd048aa80c5e6189ca103783c8c06be252d90b6",
+    "src/dmax2/analysis/equilibration.py": "e6c7d1a6e6f2a6a04a50d50882397f40409ff0e5e01d599325a0bf3f1d51a618",
+    "src/dmax2/analysis/convergence.py": "2475e73eed618d3919f81a98c197be0a2b5f459e4dc7f28c7d4303bd8656c402",
+    "src/dmax2/analysis/__init__.py": "e1e5342ff7aba50c17290b753b70df6c38d3ca2c88a960fd749875e6ed6a53c2",
+    "src/dmax2/analysis/fourier.py": "68ae7a80325ef04709fd5ba168ef94017ab5d3d0553103f9f71d27f2a193e979",
+    "src/dmax2/analysis/master_curve.py": "7f05375fb21bca8f521aa7e1be48b852bfcbc26dc0da1f05c3cd9848e66b2e8c",
+    "src/dmax2/analysis/dma.py": "bc94e4b9df377a4f7c2e92e66a8a2c55b85cb8c58b178ff11cc8d5a15ca77367",
+    "src/dmax2/analysis/error_analysis.py": "3e2579d1a4219ca08f9970053e8628bebe867825114a5bbd9ab65ce9f0191741",
+    "src/dmax2/analysis/glass_transition.py": "4a083ce064d0ad6b29dbdb018fe6945263e34cf75c82b9cb1a54fe0186b40118"
+  }
+}
