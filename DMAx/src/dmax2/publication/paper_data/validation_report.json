@@ -1,0 +1,89 @@
+{
+  "source_manifest_sha256": "83dfde078010ad08bfc605449718b7868c7076dd5cdd3010aef51b7f9d0f84ab",
+  "source_tables_verified": 37,
+  "maximum_Mprime_mean_replay_error_GPa": 0.0,
+  "figure_pngs": [
+    "Figure01_preparation.png",
+    "Figure04_TTS_diagnostics.png",
+    "Figure08_workflow.png",
+    "Figure09_sampling.png",
+    "Figure11_native_acoustic_comparison.png",
+    "PDMS_shared_clock_counterexample.png",
+    "fig02_constrained_M_heatmaps_and_H1.png",
+    "fig03_native_temperature_modern.png",
+    "fig05_amplitude_modern_T300.png",
+    "fig05_amplitude_modern_T400.png",
+    "fig06_runtime_precision.png",
+    "fig07_architecture_density_storage.png",
+    "fig09_sampling_component_offsets.png",
+    "fig10_packing_uncertainty.png",
+    "figS_amplitude_harmonics_modern.png",
+    "figS_native_frequency_loss_censoring.png"
+  ],
+  "generated_tables": [
+    "fig02_constructed_longitudinal_H1_points.csv",
+    "fig02_measured_Mprime_grid144.csv",
+    "fig07_architecture_state_source_points20.csv",
+    "fig07_architecture_state_summary8.csv",
+    "fig09_sampling_offsets_source_subset.csv",
+    "native_frequency_loss_summary144.csv",
+    "papergrid_three_packing_statistics144.csv",
+    "repeatability_by_architecture.csv"
+  ],
+  "raw_trace_reads": false,
+  "new_fits_or_bootstrap": false,
+  "MD_performed": false,
+  "new_scientific_acceptance": false,
+  "frozen_plot_table_comparisons": [
+    {
+      "file": "fig02_constructed_longitudinal_H1_points.csv",
+      "rows": 1446,
+      "maximum_absolute_numeric_difference": 0.0,
+      "comparison_rtol": 1e-12,
+      "comparison_atol": 1e-12
+    },
+    {
+      "file": "repeatability_by_architecture.csv",
+      "rows": 6,
+      "maximum_absolute_numeric_difference": 0.0,
+      "comparison_rtol": 1e-12,
+      "comparison_atol": 1e-12
+    },
+    {
+      "file": "fig02_measured_Mprime_grid144.csv",
+      "rows": 144,
+      "maximum_absolute_numeric_difference": 0.0,
+      "comparison_rtol": 1e-12,
+      "comparison_atol": 1e-12
+    },
+    {
+      "file": "papergrid_three_packing_statistics144.csv",
+      "rows": 144,
+      "maximum_absolute_numeric_difference": 0.0,
+      "comparison_rtol": 1e-12,
+      "comparison_atol": 1e-12
+    },
+    {
+      "file": "fig09_sampling_offsets_source_subset.csv",
+      "rows": 90,
+      "maximum_absolute_numeric_difference": 0.0,
+      "comparison_rtol": 1e-12,
+      "comparison_atol": 1e-12
+    },
+    {
+      "file": "fig07_architecture_state_summary8.csv",
+      "rows": 8,
+      "maximum_absolute_numeric_difference": 0.0,
+      "comparison_rtol": 1e-12,
+      "comparison_atol": 1e-12
+    },
+    {
+      "file": "fig07_architecture_state_source_points20.csv",
+      "rows": 20,
+      "maximum_absolute_numeric_difference": 0.0,
+      "comparison_rtol": 1e-12,
+      "comparison_atol": 1e-12
+    }
+  ],
+  "runtime_absolute_storage_dependencies": false
+}

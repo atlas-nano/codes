@@ -1,0 +1,7 @@
+system,T_min,T_max,Mloss_sampled_argmax_T,Mloss_sampled_argmax_MPa,tangent_sampled_argmax_T,tangent_sampled_argmax,tangent_max_at_upper_edge,tangent_group_storage_zero_warning,fitted_peak,alpha_or_Tg_assigned
+PDMS_u101_c12,175.0,345.0,225.0,1011.0530541409464,345.0,0.6257175182229595,True,False,False,False
+PDMS_u11_c100,175.0,345.0,225.0,854.0759550609858,325.0,0.5881375918218666,False,False,False,False
+PDMS_u31_c40,175.0,345.0,225.0,943.0184783325636,345.0,0.5798215940225462,True,False,False,False
+PVDF_n399_c5,250.0,625.0,377.0,661.3331944420228,625.0,1.2923134206680382,True,False,False,False
+PVDF_n99_c20,250.0,625.0,453.15,640.8548905279878,625.0,1.1200936940567885,True,False,False,False
+PVDF_n9_c200,250.0,550.0,338.15,567.5830744120163,550.0,2.4124482099740274,True,True,False,False

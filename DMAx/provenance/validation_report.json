@@ -1,0 +1,131 @@
+{
+  "package_version": "0.3.0",
+  "unit_test_runs": [
+    {
+      "scope": "Earlier full57-test suite, before final publication source-binding additions",
+      "tests": 57,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 71.402,
+      "junit_sha256": "322c249184481208f4905d6bcb8d969040d7a7a4ab8d7c51f63b4e32d6318d87"
+    },
+    {
+      "scope": "Final publication interface/build/analysis/source-binding regressions",
+      "tests": 22,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.592,
+      "junit_sha256": "0ba911c8b61d7140567e0a59a074bf2e994c29b49f4978f4361b62b97c1b6481"
+    }
+  ],
+  "independent_RDKit_repeat_graph_checks": {
+    "RDKit_version": "2020.09.1",
+    "checks": {
+      "[*:1]CC(F)(F)[*:2]": {
+        "polymer": "PVDF",
+        "repeat_smiles": "[*:1]CC(F)(F)[*:2]",
+        "force_field_available": true,
+        "connection_sites": 2
+      },
+      "[*:1]O[Si](C)(C)[*:2]": {
+        "polymer": "PDMS",
+        "repeat_smiles": "[*:1]O[Si](C)(C)[*:2]",
+        "force_field_available": true,
+        "connection_sites": 2
+      },
+      "[*:1]C(F)C(F)[*:2]": {
+        "polymer": "custom",
+        "repeat_smiles": "[*:1]C(F)C(F)[*:2]",
+        "force_field_available": false,
+        "connection_sites": 2
+      },
+      "[*:1]C(F)=C(F)[*:2]": {
+        "polymer": "custom",
+        "repeat_smiles": "[*:1]C(F)=C(F)[*:2]",
+        "force_field_available": false,
+        "connection_sites": 2
+      },
+      "[*:1][13CH2]C(F)(F)[*:2]": {
+        "polymer": "custom",
+        "repeat_smiles": "[*:1][13CH2]C(F)(F)[*:2]",
+        "force_field_available": false,
+        "connection_sites": 2
+      },
+      "[*:1]CO[*:2]": {
+        "polymer": "custom",
+        "repeat_smiles": "[*:1]CO[*:2]",
+        "force_field_available": false,
+        "connection_sites": 2
+      },
+      "missing_attachment_rejected": true
+    },
+    "source_sha256": "8e4ff39d837278766b7dcb94f573819c6483630ad11035af9f6a66df9ac4ce52"
+  },
+  "actual_tiny_builds": [
+    {
+      "polymer": "PVDF",
+      "chains": 2,
+      "nominal_VDF_per_chain": 3,
+      "atoms": 40,
+      "data_sha256": "d576620a69bbf7031f9777dd97f0321822a8254af47f20bfc94542a88690668b"
+    },
+    {
+      "polymer": "PDMS",
+      "chains": 2,
+      "internal_D_per_chain": 2,
+      "atoms": 94,
+      "data_sha256": "0a08643310d17c153184faaa24800ae27e71f4c042e0fdb7a23b4795b71e8afa"
+    }
+  ],
+  "installed_wheel_figure_reproduction": {
+    "source_manifest_sha256": "83dfde078010ad08bfc605449718b7868c7076dd5cdd3010aef51b7f9d0f84ab",
+    "source_tables_verified": 37,
+    "maximum_Mprime_mean_replay_error_GPa": 0.0,
+    "figure_pngs": [
+      "Figure01_preparation.png",
+      "Figure04_TTS_diagnostics.png",
+      "Figure08_workflow.png",
+      "Figure09_sampling.png",
+      "Figure11_native_acoustic_comparison.png",
+      "PDMS_shared_clock_counterexample.png",
+      "fig02_constrained_M_heatmaps_and_H1.png",
+      "fig03_native_temperature_modern.png",
+      "fig05_amplitude_modern_T300.png",
+      "fig05_amplitude_modern_T400.png",
+      "fig06_runtime_precision.png",
+      "fig07_architecture_density_storage.png",
+      "fig09_sampling_component_offsets.png",
+      "fig10_packing_uncertainty.png",
+      "figS_amplitude_harmonics_modern.png",
+      "figS_native_frequency_loss_censoring.png"
+    ],
+    "generated_tables": [
+      "fig02_constructed_longitudinal_H1_points.csv",
+      "fig02_measured_Mprime_grid144.csv",
+      "fig07_architecture_state_source_points20.csv",
+      "fig07_architecture_state_summary8.csv",
+      "fig09_sampling_offsets_source_subset.csv",
+      "native_frequency_loss_summary144.csv",
+      "papergrid_three_packing_statistics144.csv",
+      "repeatability_by_architecture.csv"
+    ],
+    "raw_trace_reads": false,
+    "new_fits_or_bootstrap": false,
+    "MD_performed": false,
+    "new_scientific_acceptance": false
+  },
+  "paper_bundle_manifest_sha256": "768a9f2e852ef39cf9a89ee5edafb6cf83b033fb633b686b54b0f476f4cdfd46",
+  "source_binding": "Generated initial data SHA must match build manifest; downstream read_data matches positive parent receipt output SHA; consumed source hashes and parent receipt hash retained. Checkpoint continuations are pinned, not automatically physically qualified.",
+  "physical_equilibrium_validated": false,
+  "forcefield_accuracy_validated": false,
+  "universal_linearity_validated": false,
+  "limitations": [
+    "Only zero MD integration steps in the allocated LAMMPS smoke; full fresh preparation dynamics are not rerun by these implementation tests.",
+    "The tiny unsoftened PVDF fixture has extreme initial forces and is not a usable prepared material.",
+    "Generic arbitrary-polymer force-field assignment is not implemented; explicit compatible typed data are required outside PVDF/PDMS.",
+    "Preparation/runtime extensions remain explicit reviewed operations; no global equilibrium, aging absence, universal2% linearity, validated TTS or predictive Tg is certified.",
+    "Exact historical checkpoint replay requires the external source archive; the package reproduces reduced figures and plans new statistical protocol realizations."
+  ]
+}

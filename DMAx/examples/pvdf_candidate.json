@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "polymer": {
+    "name": "PVDF",
+    "repeat_smiles": "[*:1]CC(F)(F)[*:2]",
+    "repeat_units": 100,
+    "chains": 20,
+    "initial_density_g_cm3": 0.65
+  },
+  "packings": 3,
+  "seed": 20261113,
+  "forcefield": {
+    "name": "paper_OPLS_AA",
+    "cutoff_A": 10.0,
+    "pppm_accuracy": 1e-05,
+    "special_bonds": "lj/coul 0 0 0.5",
+    "mixing": "geometric"
+  },
+  "preparation": {
+    "timestep_fs": 0.5,
+    "hot_temperature_K": 450.0,
+    "soft_ps": 75.0,
+    "limited_ps": 25.0,
+    "hot_NPT_ps": 1000.0,
+    "hot_NVT_ps": 200.0,
+    "ramp_ps": 150.0,
+    "NPT_stage_ps": [
+      750.0,
+      750.0
+    ],
+    "NVT_hold_ps": 500.0,
+    "pressure_atm": 1.0,
+    "thermostat_damping_fs": 100.0,
+    "barostat_damping_fs": 5000.0,
+    "neighbor_check": "yes",
+    "scalar_interval_ps": 0.5,
+    "coordinate_interval_ps": 10.0,
+    "policy": "fixed_duration_with_diagnostics",
+    "equilibrium_established": false,
+    "adaptive_extension_ps": 500.0,
+    "maximum_adaptive_extensions": 4,
+    "stopping_targets": null
+  },
+  "measurement": {
+    "temperatures_K": [
+      300.0,
+      400.0
+    ],
+    "frequencies_GHz": [
+      10.0,
+      25.0,
+      50.0,
+      100.0,
+      250.0,
+      500.0
+    ],
+    "strain_amplitudes": [
+      0.02
+    ],
+    "candidate_amplitude": 0.02,
+    "amplitude_qualification_required": true,
+    "amplitude_screen": [
+      0.0025,
+      0.005,
+      0.01,
+      0.015,
+      0.02,
+      0.04,
+      0.06
+    ],
+    "timestep_fs": 0.5,
+    "logging_fs": 2.0,
+    "thermostat_damping_fs": 100.0,
+    "thermostat_chain": 3,
+    "mode": "axial_fixed",
+    "stress_operator": "total",
+    "harmonics": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "startup_discard_cycles": 0,
+    "runtime": {
+      "policy": "bounded_adaptive",
+      "initial_minimum_cycles": 15,
+      "initial_minimum_ps": 400.0,
+      "extension_ps": 200.0,
+      "maximum_ps": 2400.0,
+      "block_ps": 200.0,
+      "minimum_blocks": 6,
+      "precision_targets": null,
+      "temporal_consistency_targets": null
+    },
+    "physical_linearity_established": false
+  },
+  "scientific_scope": {
+    "default_architecture": "benchmarked starting point; not system-size or entanglement convergence",
+    "default_amplitude": "finite-amplitude candidate; not universal linear-response certification",
+    "runtime": "conditional precision and late-window consistency; not equilibrium or absence of aging",
+    "TTS": "diagnostic and opt-in; no automatic Tg prediction"
+  }
+}

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dmax2"
+version = "0.3.0"
+description = "Standalone dynamic mechanical analysis workflows for molecular dynamics."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pandas",
+  "matplotlib",
+]
+
+[project.optional-dependencies]
+yaml = ["pyyaml"]
+mastercurves = ["mastercurves"]
+test = ["pytest", "pyyaml"]
+structures = ["rdkit"]
+
+[project.scripts]
+dmax2 = "dmax2.cli:main"
+dmax = "dmax2.publication.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"dmax2.publication" = ["paper_data/*.json", "paper_data/*.csv", "paper_data/*.py", "paper_data/*.md", "paper_data/**/*.json", "paper_data/**/*.csv", "paper_data/**/*.py", "paper_data/**/*.md"]

@@ -1,0 +1,42 @@
+{
+  "LAMMPS_version": "2 Apr 2025",
+  "container_image_sha256": "4be15dfd885df45212da0f33d23d84ddf3c2c50991c9e4e22abde5c4b37b340a",
+  "numerical_completions": 2,
+  "failures": 0,
+  "MD_steps_integrated": 0,
+  "primary_report_sha256": "f2989b6d78da5ec759ce99599b1a91b64080c544453b6218dd8aaf94fc149dc7",
+  "scope": "Zero-step syntax/finite-force check only; no equilibration, dynamics, modulus or force-field-accuracy validation.",
+  "warning": "The unsoftened tiny PVDF fixture has extreme forces/overlap/self-image artifacts. It is an export/syntax test, not a physically usable prepared sample.",
+  "records": [
+    {
+      "polymer": "PVDF",
+      "input_sha256": "1b06fba16eac59d6d2ad16c169727a774e5ffad698135ac835b2c40f4f357cdf",
+      "test_data_sha256": "d576620a69bbf7031f9777dd97f0321822a8254af47f20bfc94542a88690668b",
+      "returncode": 0,
+      "integrated_steps": 0,
+      "LAMMPS_step": 0.0,
+      "temperature_K": 300.0000000000001,
+      "density_g_cm3": 0.6499999297224146,
+      "potential_energy_kcal_mol": 54860203.598802626,
+      "maximum_force_kcal_mol_A": 1066313915.3904815,
+      "pressure_zz_total_atm": 37718797355.03352,
+      "pressure_zz_virial_atm": 37718795408.396996,
+      "physical_equilibrium_validated": false
+    },
+    {
+      "polymer": "PDMS",
+      "input_sha256": "a3cf916c40b3d6301a3df86b31b1dd6416d4b3b8db23c42fc57ccd078a3409c1",
+      "test_data_sha256": "0a08643310d17c153184faaa24800ae27e71f4c042e0fdb7a23b4795b71e8afa",
+      "returncode": 0,
+      "integrated_steps": 0,
+      "LAMMPS_step": 0.0,
+      "temperature_K": 299.9999999999999,
+      "density_g_cm3": 0.09999998710384732,
+      "potential_energy_kcal_mol": 45.97940016375094,
+      "maximum_force_kcal_mol_A": 114.70973427025972,
+      "pressure_zz_total_atm": -4428.545598214203,
+      "pressure_zz_virial_atm": -4832.537078171238,
+      "physical_equilibrium_validated": false
+    }
+  ]
+}

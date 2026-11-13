@@ -1,0 +1,87 @@
+project_name: PDMS_11mon_100chain_DMAx2
+
+polymer:
+  name: PDMS
+  smiles: "[*]O[Si](C)(C)O[*]"
+  monomers_per_chain: 11
+  chains: 100
+  conformers: 1
+  cyclic: false
+  initial_density_g_cm3: 0.65
+  structure_method: psp
+
+forcefield:
+  provider: psp_oplsaa
+  forcefield: oplsaa
+  neutralize: true
+  pair_style: "lj/cut/coul/long 8.0"
+  bond_style: harmonic
+  angle_style: harmonic
+  dihedral_style: opls
+  improper_style: none
+  kspace_style: "pppm 1.0e-5"
+  pair_modify: "mix geometric"
+  special_bonds: "lj/coul 0.0 0.0 0.5"
+
+equilibration:
+  temperature_k: 300.0
+  pressure_atm: 1.0
+  timestep_fs: 1.0
+  tdamp_fs: 100.0
+  pdamp_fs: 2000.0
+  minimize_steps: 5000
+  heat_steps: 10000
+  npt_anneal_steps: 250000
+  npt_relax_steps: 250000
+  nvt_final_steps: 50000
+  anneal_temperature_k: 500.0
+
+production:
+  frequency_ghz: 25.0
+  strains: [0.02, 0.04, 0.06, 0.08]
+  cycles: 10
+  discard_cycles: 2
+  timestep_fs: 1.0
+  temperature_k: 300.0
+  tdamp_fs: 100.0
+  pdamp_fs: 120000.0
+  output_every: 100
+  modes:
+    - shear_sllod_remapv
+    - shear_nvt_remapx
+    - axial_nvt_remapx_volcons
+    - axial_npt_lateral
+  legacy_modes:
+    - legacy_axial_pressure
+  recommended_signal: sxy_vir_MPa
+
+convergence:
+  min_r2: 0.70
+  min_snr: 2.0
+  max_harmonic_ratio: 0.20
+  max_drift_fraction_per_cycle: 0.05
+  preferred_strain_window: [0.04, 0.08]
+  cycle_counts: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  cycle_r2_tolerance: 0.01
+  cycle_modulus_tolerance: 0.05
+  cycle_consecutive_windows: 1
+  minimum_cycles: 2
+
+glass_transition:
+  enabled: true
+  temperatures_k: [180, 220, 260, 300, 340, 380, 420, 460]
+  method: tan_delta_inflection_near_peak
+  comparison_methods: [density_piecewise]
+  observable: specific_volume
+  tan_delta_frequency_ghz:
+  tan_delta_signal: sxy_vir_MPa
+  tan_delta_parser: lockin
+  smoothing_window: 3
+
+master_curve:
+  enabled: true
+  reference_temperature_k: 300.0
+  shift_model: wlf
+  metric: storage_modulus_MPa
+  include_vertical_shift: false
+  fixed_noise: 0.04

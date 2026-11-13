@@ -1,0 +1,7 @@
+{
+  "/global/cfs/cdirs/m5056/rsb/2026/DMAx/DMAx2_full_runs/PVDF_1600mer_2chain_20260520_OPLSAA_tension/01_psp_amorphous_builder/generate_pvdf_1600x2_psp_oplsaa.py": "f8c91c767eb9721a00c97e437567b325d2dca351bee72518b2da7fcdf84141f4",
+  "/pscratch/sd/r/rsb/2026/DMAx/recompute_20261016/software/adv1_pdms_builder_v1_pdms_oplsaa.py": "adc137fd59ecdac4d682f7dd0cc2e2854905dc30feedd8c8be7a06aef91c8bd2",
+  "/global/cfs/cdirs/m5056/rsb/2026/DMAx/codes_fourier/DMAx/scripts/build_validation_structures.py": "03142824a858bde79b42937a1d945b600999624ad612e2e1ba2b755c7485eb17",
+  "/pscratch/sd/r/rsb/2026/DMAx/recompute_20261016/software/adv1_pdms_build_v5_build_pdms_independent.py": "294cd46f44fb8083d285d06fad45647b147416a038c78561e2527a34a1f9ebd7",
+  "/pscratch/sd/r/rsb/2026/DMAx/recompute_20261016/software/adv1_pdms_build_v5_pdms_heavy_control.py": "9891bbffe7d494a437b1877ba3a3cd1ea3c6a242709364eab5df4b70340666da"
+}
